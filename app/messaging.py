@@ -44,6 +44,26 @@ BOT_PREFIXES = (
 
 # ── Report formatters ─────────────────────────────────────────────────────────
 
+def build_greeting_reply() -> str:
+    return (
+        "Hey! \U0001f44b I'm your expense diary.\n\n"
+        "Send any expense in plain language, e.g.:\n"
+        "  \u2022 '45 GHS lunch at Papaye'\n"
+        "  \u2022 'Uber 35 GHS'\n\n"
+        "Type *HELP* for all commands."
+    )
+
+
+def build_not_an_expense_hint() -> str:
+    return (
+        "I didn't spot an amount in that message.\n\n"
+        "To log an expense, include a number, e.g.:\n"
+        "  \u2022 '45 GHS lunch'\n"
+        "  \u2022 'Uber ride 35 cedis'\n\n"
+        "Type *HELP* for commands."
+    )
+
+
 def build_welcome() -> str:
     return (
         "Welcome to Expense Diary! \U0001f9fe\n\n"

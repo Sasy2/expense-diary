@@ -31,8 +31,8 @@ from app.database import (
     save_expense,
     set_user_tier,
 )
-from app.handlers import detect_command, handle_command, process_expense_message
-from app.messaging import build_tier_confirmation, build_welcome, send_wa_text
+from app.handlers import detect_command, detect_greeting, handle_command, process_expense_message
+from app.messaging import build_greeting_reply, build_tier_confirmation, build_welcome, send_wa_text
 from app.models import (
     DbStatusResponse,
     ManualExpenseRequest,
@@ -187,6 +187,11 @@ async def _route_text(phone: str, text: str, input_method: str = "text") -> None
     if command:
         logger.info("Command received", command=command, phone=safe_log_phone(phone))
         await handle_command(phone, command)
+        return
+
+    if detect_greeting(text):
+        logger.info("Greeting received", phone=safe_log_phone(phone))
+        await send_wa_text(phone, build_greeting_reply())
         return
 
     await process_expense_message(phone, user_id, text, input_method)

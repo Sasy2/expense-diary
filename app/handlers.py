@@ -20,9 +20,11 @@ from app.database import (
 )
 from app.messaging import (
     build_confirmation,
+    build_greeting_reply,
     build_help,
     build_last_n,
     build_limit_reached_message,
+    build_not_an_expense_hint,
     build_premium_upgrade_message,
     build_report_paywall,
     build_total_summary,
@@ -66,6 +68,35 @@ def detect_command(text: str) -> Optional[str]:
         "PRO":     "PRO",
         "PREMIUM": "PREMIUM",
     }.get(normalised)
+
+
+_GREETINGS = frozenset({
+    "hi", "hey", "hello", "hola", "howdy", "greetings",
+    "good morning", "good afternoon", "good evening", "good day",
+    "morning", "afternoon", "evening",
+    "whats up", "what's up", "wassup", "sup", "yo", "hiya",
+    "hi there", "hey there", "hello there",
+    "thanks", "thank you", "thankyou", "ok", "okay", "cheers",
+})
+
+
+def detect_greeting(text: str) -> bool:
+    """
+    Return True for small-talk / greetings that are not expenses.
+    Messages containing digits are never treated as greetings.
+    """
+    if re.search(r"\d", text):
+        return False
+    normalised = re.sub(r"[^\w\s']", "", text.strip().lower())
+    normalised = re.sub(r"\s+", " ", normalised).strip()
+    if not normalised:
+        return False
+    if normalised in _GREETINGS:
+        return True
+    for stem in ("hello", "hey", "hi"):
+        if normalised.startswith(stem) and len(normalised) <= len(stem) + 3:
+            return True
+    return False
 
 
 async def _send_upgrade_options(phone: str, tier: str) -> None:
@@ -244,6 +275,11 @@ async def process_expense_message(
             "  \u2022 'Uber ride 35 cedis'\n"
             "  \u2022 'Client paid 2000 GHS'"
         )
+        return
+
+    if entry.amount <= 0:
+        logger.info("Rejected zero-amount message", phone=phone[-4:] if len(phone) >= 4 else "****")
+        await send_wa_text(phone, build_not_an_expense_hint())
         return
 
     await save_expense(phone, user_id, entry, input_method)
