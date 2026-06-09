@@ -16,6 +16,7 @@ import hmac
 import json
 import os
 import re
+from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -57,6 +58,32 @@ def decrypt_for_user(ciphertext: str, phone: str) -> dict:
     """Decrypt a Fernet ciphertext string back to a dict."""
     f = Fernet(_derive_fernet_key(phone))
     return json.loads(f.decrypt(ciphertext.encode()).decode())
+
+
+def _notify_fernet() -> Fernet:
+    """
+    App-level Fernet key for notify_phone_enc only (monthly WhatsApp recaps).
+    Separate from per-user expense keys — still requires ENCRYPTION_SECRET to decrypt.
+    """
+    secret = os.environ["ENCRYPTION_SECRET"].encode()
+    raw = hashlib.sha256(b"kountn:notify_phone:v1:" + secret).digest()
+    return Fernet(base64.urlsafe_b64encode(raw))
+
+
+def encrypt_stored_phone(phone: str) -> str:
+    """Encrypt a WhatsApp number for outbound recap messages (cron)."""
+    normalized = _normalize_phone(phone)
+    return _notify_fernet().encrypt(normalized.encode()).decode()
+
+
+def decrypt_stored_phone(ciphertext: str) -> Optional[str]:
+    """Decrypt notify_phone_enc. Returns None if missing or invalid."""
+    if not ciphertext:
+        return None
+    try:
+        return _notify_fernet().decrypt(ciphertext.encode()).decode()
+    except InvalidToken:
+        return None
 
 
 def safe_log_phone(phone: str) -> str:

@@ -29,9 +29,9 @@ from app.database import (
     get_user_record,
     init_supabase,
     reset_all_entry_counts,
-    get_users_for_monthly_summary,
     save_expense,
 )
+from app.summaries import send_monthly_recaps
 from app.trial import handle_trial_lifecycle, run_trial_expiry_cron
 from app.handlers import detect_command, detect_greeting, handle_command, process_expense_message
 from app.messaging import build_greeting_reply, build_welcome, send_wa_text
@@ -296,31 +296,36 @@ async def payment_webhook(request: Request):
 async def monthly_cron(request: Request):
     """
     Called by an external cron job on the 1st of each month.
-    Resets entry counters. Proactive summaries need encrypted_phone (future).
+    Sends last month's recap, expires trials, resets entry counters.
     """
     secret = request.headers.get("x-cron-secret", "")
     if secret != os.environ.get("CRON_SECRET", ""):
         raise HTTPException(status_code=401, detail="Unauthorised")
 
     logger.info("Monthly cron started")
-    month_year = datetime.now(timezone.utc).strftime("%Y-%m")
 
-    reset_count = await reset_all_entry_counts()
-    logger.info("Entry counts reset", users=reset_count)
+    summaries_sent, eligible, recap_month = await send_monthly_recaps()
+    logger.info(
+        "Monthly recaps complete",
+        sent=summaries_sent,
+        eligible=eligible,
+        recap_month=recap_month,
+    )
 
     trials_expired = await run_trial_expiry_cron()
     logger.info("Expired trials downgraded", count=trials_expired)
 
-    summary_users = await get_users_for_monthly_summary()
-    sent = 0
+    reset_count = await reset_all_entry_counts()
+    logger.info("Entry counts reset", users=reset_count)
 
-    logger.info("Monthly cron complete", summaries_sent=sent, eligible_users=len(summary_users))
+    logger.info("Monthly cron complete")
     return {
         "status":             "ok",
-        "entry_counts_reset": reset_count,
+        "recap_month":        recap_month,
+        "summaries_sent":     summaries_sent,
+        "summaries_eligible": eligible,
         "trials_expired":     trials_expired,
-        "summaries_sent":     sent,
-        "month":              month_year,
+        "entry_counts_reset": reset_count,
     }
 
 

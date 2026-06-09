@@ -13,6 +13,8 @@ from typing import Optional
 from structlog import get_logger
 
 from app.database import (
+    decrement_entry_count,
+    delete_last_expense,
     get_user_expenses,
     get_user_record,
     increment_entry_count,
@@ -24,6 +26,7 @@ from app.messaging import (
     build_help,
     build_last_n,
     build_limit_reached_message,
+    build_undo_confirmation,
     build_not_an_expense_hint,
     build_premium_upgrade_message,
     build_report_paywall,
@@ -48,6 +51,9 @@ from app.payments import create_payment_link
 
 logger = get_logger()
 
+_LAST_CMD = re.compile(r"^last\s*(\d+)$", re.IGNORECASE)
+_MAX_LAST_N = 50
+
 
 def _user_tier(record: dict | None) -> str:
     if not record:
@@ -58,17 +64,25 @@ def _user_tier(record: dict | None) -> str:
 def detect_command(text: str) -> Optional[str]:
     """
     Normalise text and return a command name if recognised, else None.
-    Handles spacing and case variants: "last 5", "LAST5", "Last  5" all work.
+    LAST commands: "last 5", "last 10", "LAST5", "last20" → "LAST:5", "LAST:10", etc.
     """
-    normalised = re.sub(r"\s+", "", text.strip().upper())
+    stripped = text.strip()
+    last_match = _LAST_CMD.match(stripped)
+    if last_match:
+        n = min(max(int(last_match.group(1)), 1), _MAX_LAST_N)
+        return f"LAST:{n}"
+
+    normalised = re.sub(r"\s+", "", stripped.upper())
     return {
         "HELP":    "HELP",
         "TOTAL":   "TOTAL",
         "REPORT":  "REPORT",
-        "LAST5":   "LAST5",
+        "LAST5":   "LAST:5",
         "UPGRADE": "UPGRADE",
         "PRO":     "PRO",
         "PREMIUM": "PREMIUM",
+        "UNDO":    "UNDO",
+        "DELETE":  "UNDO",
     }.get(normalised)
 
 
@@ -214,9 +228,25 @@ async def handle_command(phone: str, command: str) -> None:
         await send_wa_text(phone, build_total_summary(rows))
         return
 
-    if command == "LAST5":
-        rows = await get_user_expenses(phone, limit=5, order_desc=True)
-        await send_wa_text(phone, build_last_n(rows, 5))
+    if command.startswith("LAST:"):
+        n = int(command.split(":", 1)[1])
+        rows = await get_user_expenses(phone, limit=n, order_desc=True)
+        await send_wa_text(phone, build_last_n(rows, n))
+        return
+
+    if command == "UNDO":
+        if not record:
+            await send_wa_text(phone, "\u274c Could not find your account. Try again.")
+            return
+        deleted = await delete_last_expense(phone, record["id"])
+        if not deleted:
+            await send_wa_text(
+                phone,
+                "Nothing to undo — you have no transactions logged yet."
+            )
+            return
+        await decrement_entry_count(record["id"])
+        await send_wa_text(phone, build_undo_confirmation(deleted))
         return
 
     if command == "REPORT":

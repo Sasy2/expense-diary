@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS expense_users (
     trial_ends_at         TIMESTAMPTZ,                -- Pro trial end (null if paid)
     is_paid               BOOLEAN     DEFAULT FALSE,  -- true after Paystack payment
     trial_reminders_sent  INT         DEFAULT 0,      -- 0=none, 1=mid, 2=week, 3=final
+    notify_phone_enc      TEXT,                       -- Fernet ciphertext for monthly recaps
     created_at            TIMESTAMPTZ DEFAULT NOW()
 );
 

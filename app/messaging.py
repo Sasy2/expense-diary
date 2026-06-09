@@ -120,7 +120,8 @@ def build_welcome(trial_ends_at: str) -> str:
         "\U0001f4f8 *Photos:* Send with a caption describing the amount.\n\n"
         "*Commands:*\n"
         "  TOTAL \u2014 this month's breakdown\n"
-        "  LAST 5 \u2014 recent entries\n"
+        "  LAST 5 / LAST 10 \u2014 recent entries\n"
+        "  UNDO \u2014 remove last transaction\n"
         "  HELP \u2014 full instructions\n"
         "  UPGRADE \u2014 see paid plans after your trial\n\n"
         "After your trial, you'll move to Free unless you upgrade."
@@ -136,21 +137,24 @@ def build_help() -> str:
         "  \u2022 'Client paid 5000 GHS'\n\n"
         "*Commands:*\n"
         "  TOTAL \u2014 Expenses & Income breakdown\n"
-        "  LAST 5 \u2014 your last 5 transactions\n"
+        "  LAST 5 / LAST 10 \u2014 recent transactions (any number up to 50)\n"
+        "  UNDO \u2014 remove your most recent transaction\n"
         "  HELP \u2014 this message\n"
         "  UPGRADE \u2014 Pro & Premium plans\n\n"
+        "*Made a mistake?* Reply *UNDO* to delete your last entry, then re-send the correct one.\n\n"
         "*Plans:*\n"
         f"  Free \u2014 {get_entry_limit(TIER_FREE)} transactions/month\n"
         f"  Pro (GHS {TIER_PRICES_GHS[TIER_PRO]}/mo) \u2014 "
-        f"{get_entry_limit(TIER_PRO)} transactions + summaries\n"
+        f"{get_entry_limit(TIER_PRO)} transactions + monthly recap\n"
         f"  Premium (GHS {TIER_PRICES_GHS[TIER_PREMIUM]}/mo) \u2014 "
         f"{get_entry_limit(TIER_PREMIUM)} transactions + CSV (REPORT)\n\n"
+        f"Pro & Premium get an auto recap on the 1st (last month's totals).\n"
         f"New users get {TRIAL_DAYS} days of Pro free."
     )
 
 
-def build_total_summary(rows: list[dict]) -> str:
-    month_name = datetime.now(timezone.utc).strftime("%B %Y")
+def build_total_summary(rows: list[dict], month_label: str | None = None) -> str:
+    month_name = month_label or datetime.now(timezone.utc).strftime("%B %Y")
     if not rows:
         return (
             f"No transactions logged yet for {month_name}.\n\n"
@@ -191,6 +195,16 @@ def build_total_summary(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def build_monthly_recap(rows: list[dict], month_label: str) -> str:
+    """First-of-month WhatsApp recap for the previous calendar month."""
+    summary = build_total_summary(rows, month_label=month_label)
+    return (
+        f"\U0001f4ec *Your {month_label} recap from {BRAND_NAME}*\n\n"
+        f"{summary}\n\n"
+        "Keep KountN this month! Type *TOTAL* anytime for a live view."
+    )
+
+
 def build_last_n(rows: list[dict], n: int = 5) -> str:
     if not rows:
         return f"No transactions yet. Send {BRAND_NAME} your first entry!"
@@ -210,6 +224,23 @@ def build_last_n(rows: list[dict], n: int = 5) -> str:
             f"{desc} ({date_part})"
         )
     return "\n".join(lines)
+
+
+def build_undo_confirmation(deleted: dict) -> str:
+    try:
+        amt = float(deleted.get("amount", 0))
+    except (ValueError, TypeError):
+        amt = 0.0
+    currency = str(deleted.get("currency", "GHS"))
+    etype = str(deleted.get("entry_type", "Expense"))
+    desc = str(deleted.get("description", ""))
+    return (
+        f"\u2705 *Undone* \u2014 last transaction removed.\n\n"
+        f"Removed: {etype} {currency} {amt:,.2f}\n"
+        f"{desc}\n\n"
+        "Your monthly transaction count was restored.\n"
+        "Re-send the correct entry if needed."
+    )
 
 
 def build_confirmation(entry) -> str:

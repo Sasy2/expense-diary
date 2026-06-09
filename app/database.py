@@ -18,6 +18,7 @@ from structlog import get_logger
 from app.security import (
     decrypt_for_user,
     encrypt_for_user,
+    encrypt_stored_phone,
     get_phone_lookup_id,
     safe_log_phone,
 )
@@ -65,7 +66,9 @@ async def get_or_create_user(phone: str) -> tuple[str, bool]:
             .execute()
     )
     if result.data:
-        return result.data[0]["id"], False
+        user_id = result.data[0]["id"]
+        await ensure_notify_phone(phone, user_id)
+        return user_id, False
 
     insert_result = await asyncio.to_thread(
         lambda: sb.table("expense_users")
@@ -75,12 +78,26 @@ async def get_or_create_user(phone: str) -> tuple[str, bool]:
                 "trial_ends_at":        new_user_trial_ends_at(),
                 "is_paid":              False,
                 "trial_reminders_sent": 0,
+                "notify_phone_enc":     encrypt_stored_phone(phone),
             })
             .execute()
     )
     user_id = insert_result.data[0]["id"]
     logger.info("New user created", phone=safe_log_phone(phone))
     return user_id, True
+
+
+async def ensure_notify_phone(phone: str, user_id: str) -> None:
+    """Backfill encrypted phone for monthly recaps (existing users on next message)."""
+    enc = encrypt_stored_phone(phone)
+    sb = get_supabase()
+    await asyncio.to_thread(
+        lambda: sb.table("expense_users")
+            .update({"notify_phone_enc": enc})
+            .eq("id", user_id)
+            .is_("notify_phone_enc", "null")
+            .execute()
+    )
 
 
 async def get_user_record(phone: str) -> Optional[dict]:
@@ -200,6 +217,34 @@ async def update_trial_reminder_stage(phone: str, stage: int) -> None:
     )
 
 
+async def decrement_entry_count(user_id: str) -> int:
+    """Decrement entry_count (floor at 0). Used when a transaction is undone."""
+    sb = get_supabase()
+    result = await asyncio.to_thread(
+        lambda: sb.rpc("decrement_entry_count", {"user_uuid": user_id}).execute()
+    )
+    return result.data if isinstance(result.data, int) else 0
+
+
+async def delete_last_expense(phone: str, user_id: str) -> Optional[dict]:
+    """Delete the most recent transaction and return its decrypted data, or None."""
+    rows = await get_user_expenses(phone, limit=1, order_desc=True)
+    if not rows:
+        return None
+
+    expense_id = rows[0]["id"]
+    sb = get_supabase()
+    await asyncio.to_thread(
+        lambda: sb.table("expenses")
+            .delete()
+            .eq("id", expense_id)
+            .eq("user_id", user_id)
+            .execute()
+    )
+    logger.info("Transaction deleted (undo)", phone=safe_log_phone(phone), expense_id=expense_id)
+    return rows[0]
+
+
 async def increment_entry_count(user_id: str) -> int:
     """
     Increment entry_count and return the new value.
@@ -235,11 +280,11 @@ async def reset_all_entry_counts() -> int:
 
 
 async def get_users_for_monthly_summary() -> list[dict]:
-    """Return Pro and Premium users for monthly summary dispatch."""
+    """Return Pro and Premium users eligible for monthly recap dispatch."""
     sb = get_supabase()
     result = await asyncio.to_thread(
         lambda: sb.table("expense_users")
-            .select("id, phone_id, tier")
+            .select("id, phone_id, tier, notify_phone_enc")
             .in_("tier", ["pro", "premium"])
             .execute()
     )
