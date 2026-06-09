@@ -37,8 +37,10 @@ from app.models import (
     TIER_FREE,
     TIER_PREMIUM,
     TIER_PRO,
+    TIER_PRICES_GHS,
     can_export_csv,
     get_entry_limit,
+    is_trial_user,
     nudge_threshold,
 )
 from app.parser import parse_expense
@@ -158,15 +160,25 @@ async def handle_command(phone: str, command: str) -> None:
                 await send_wa_text(phone, "\U0001f38a You're on Premium \u2014 our top plan!")
                 return
             if tier == TIER_PRO:
-                await send_wa_text(phone, "\U0001f38a You're already on Pro! Reply *PREMIUM* to upgrade.")
+                if is_trial_user(record):
+                    await send_wa_text(
+                        phone,
+                        "\U0001f38a You're on a *free Pro trial* right now!\n\n"
+                        "Enjoy it while it lasts, or reply *PREMIUM* to upgrade early."
+                    )
+                else:
+                    await send_wa_text(
+                        phone,
+                        "\U0001f38a You're already on Pro! Reply *PREMIUM* to upgrade."
+                    )
                 return
             try:
                 url = await create_payment_link(phone, TIER_PRO)
                 await send_wa_text(
                     phone,
-                    f"\U0001f4b3 *Pro \u2014 GHS 25/month*\n"
-                    f"  \u2714 {get_entry_limit(TIER_PRO)} entries/month\n"
-                    "  \u2714 Monthly auto-summary\n\n"
+                    f"\U0001f4b3 *Pro \u2014 GHS {TIER_PRICES_GHS[TIER_PRO]}/month*\n"
+                    f"  \u2714 {get_entry_limit(TIER_PRO)} transactions/month\n"
+                    "  \u2714 Monthly summaries (TOTAL)\n\n"
                     f"\U0001f449 {url}\n\n"
                     "(Link expires in 24 hours)"
                 )
@@ -216,7 +228,8 @@ async def handle_command(phone: str, command: str) -> None:
                 logger.error("Payment link error", error=str(exc))
                 await send_wa_text(
                     phone,
-                    "\U0001f4c1 CSV export is a Premium feature (GHS 99/month). Reply UPGRADE to unlock."
+                    f"\U0001f4c1 CSV export is Premium (GHS {TIER_PRICES_GHS[TIER_PREMIUM]}/month). "
+                    "Reply UPGRADE to unlock."
                 )
             return
 

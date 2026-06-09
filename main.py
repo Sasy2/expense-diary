@@ -26,12 +26,13 @@ from structlog import get_logger
 
 from app.database import (
     get_or_create_user,
+    get_user_record,
     init_supabase,
     reset_all_entry_counts,
     get_users_for_monthly_summary,
     save_expense,
-
 )
+from app.trial import handle_trial_lifecycle, run_trial_expiry_cron
 from app.handlers import detect_command, detect_greeting, handle_command, process_expense_message
 from app.messaging import build_greeting_reply, build_welcome, send_wa_text
 from app.models import (
@@ -74,13 +75,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="WhatsApp Expense Diary",
+    title="KountN",
     description=(
-        "AI-powered multi-tenant expense tracker via WhatsApp. "
-        "Supabase PostgreSQL with per-user AES-256-Fernet encryption. "
-        "Free: 5 entries/month. Pro: GHS 25 (30 entries). Premium: GHS 99 (100 entries + CSV)."
+        "KountN — AI-powered expense tracker via WhatsApp. "
+        "30-day Pro trial for new users. Pro: GHS 20 (75 txns/mo). Premium: GHS 49 (300 txns/mo + CSV)."
     ),
-    version="4.0.0",
+    version="5.0.0",
     lifespan=lifespan,
 )
 
@@ -181,8 +181,12 @@ async def _route_text(phone: str, text: str, input_method: str = "text") -> None
     user_id, is_new = await get_or_create_user(phone)
     if is_new:
         logger.info("First message from new user", phone=safe_log_phone(phone))
-        await send_wa_text(phone, build_welcome())
+        record = await get_user_record(phone)
+        trial_end = (record or {}).get("trial_ends_at", "")
+        await send_wa_text(phone, build_welcome(trial_end))
         return
+
+    await handle_trial_lifecycle(phone)
 
     command = detect_command(text)
     if command:
@@ -247,7 +251,7 @@ async def payment_success(
     return HTMLResponse(
         "<html><body style='font-family:sans-serif;text-align:center;padding:48px'>"
         "<h1>Payment successful!</h1>"
-        "<p>Your plan is now active. Return to <strong>WhatsApp</strong> and start logging expenses.</p>"
+        "<p>Your KountN plan is now active. Return to <strong>WhatsApp</strong> and keep KountN!</p>"
         "</body></html>"
     )
 
@@ -304,6 +308,9 @@ async def monthly_cron(request: Request):
     reset_count = await reset_all_entry_counts()
     logger.info("Entry counts reset", users=reset_count)
 
+    trials_expired = await run_trial_expiry_cron()
+    logger.info("Expired trials downgraded", count=trials_expired)
+
     summary_users = await get_users_for_monthly_summary()
     sent = 0
 
@@ -311,6 +318,7 @@ async def monthly_cron(request: Request):
     return {
         "status":             "ok",
         "entry_counts_reset": reset_count,
+        "trials_expired":     trials_expired,
         "summaries_sent":     sent,
         "month":              month_year,
     }

@@ -42,7 +42,7 @@ async def parse_expense(text: str) -> ExpenseEntry:
                 {
                     "role": "system",
                     "content": dedent(f"""\
-                        You are a financial diary assistant for Ghanaian solopreneurs.
+                        You are KountN, a financial diary assistant for Ghanaian solopreneurs.
                         Extract a structured expense or income entry from the user message.
 
                         Rules:

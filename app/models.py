@@ -2,6 +2,8 @@
 models.py — Pydantic models for API requests, responses, and AI structured output.
 """
 
+from datetime import datetime, timedelta, timezone
+
 from pydantic import BaseModel, Field
 
 TIER_FREE = "free"
@@ -10,14 +12,17 @@ TIER_PREMIUM = "premium"
 
 TIER_LIMITS: dict[str, int] = {
     TIER_FREE: 5,
-    TIER_PRO: 30,
-    TIER_PREMIUM: 100,
+    TIER_PRO: 75,
+    TIER_PREMIUM: 300,
 }
 
 TIER_PRICES_GHS: dict[str, int] = {
-    TIER_PRO: 25,
-    TIER_PREMIUM: 99,
+    TIER_PRO: 20,
+    TIER_PREMIUM: 49,
 }
+
+TRIAL_DAYS = 30
+BRAND_NAME = "KountN"
 
 
 def get_entry_limit(tier: str) -> int:
@@ -36,6 +41,21 @@ def can_export_csv(tier: str) -> bool:
 
 def gets_monthly_summary(tier: str) -> bool:
     return tier in (TIER_PRO, TIER_PREMIUM)
+
+
+def new_user_trial_ends_at() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
+
+
+def is_trial_user(record: dict | None) -> bool:
+    """True if the user is on a complimentary Pro trial (not paid)."""
+    if not record:
+        return False
+    return (
+        record.get("tier") == TIER_PRO
+        and not record.get("is_paid")
+        and bool(record.get("trial_ends_at"))
+    )
 
 
 CATEGORIES = [

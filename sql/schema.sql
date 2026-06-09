@@ -6,11 +6,14 @@
 -- Users table
 -- phone_id is a one-way SHA-256 hash — never the real number
 CREATE TABLE IF NOT EXISTS expense_users (
-    id           UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
-    phone_id     TEXT        UNIQUE NOT NULL,
-    tier         TEXT        DEFAULT 'free',  -- 'free', 'pro', or 'premium'
-    entry_count  INT         DEFAULT 0,
-    created_at   TIMESTAMPTZ DEFAULT NOW()
+    id                    UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+    phone_id              TEXT        UNIQUE NOT NULL,
+    tier                  TEXT        DEFAULT 'pro',  -- new users start on Pro trial
+    entry_count           INT         DEFAULT 0,
+    trial_ends_at         TIMESTAMPTZ,                -- Pro trial end (null if paid)
+    is_paid               BOOLEAN     DEFAULT FALSE,  -- true after Paystack payment
+    trial_reminders_sent  INT         DEFAULT 0,      -- 0=none, 1=mid, 2=week, 3=final
+    created_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Expenses table

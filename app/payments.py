@@ -27,8 +27,8 @@ logger = get_logger()
 
 PAYSTACK_API = "https://api.paystack.co"
 TIER_AMOUNT_PESEWAS = {
-    TIER_PRO: 2500,      # GHS 25.00
-    TIER_PREMIUM: 9900,  # GHS 99.00
+    TIER_PRO: 2000,      # GHS 20.00
+    TIER_PREMIUM: 4900,  # GHS 49.00
 }
 
 

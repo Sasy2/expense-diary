@@ -21,7 +21,7 @@ from app.security import (
     get_phone_lookup_id,
     safe_log_phone,
 )
-from app.models import ExpenseEntry
+from app.models import ExpenseEntry, TIER_FREE, TIER_PRO, new_user_trial_ends_at
 
 logger = get_logger()
 
@@ -69,7 +69,13 @@ async def get_or_create_user(phone: str) -> tuple[str, bool]:
 
     insert_result = await asyncio.to_thread(
         lambda: sb.table("expense_users")
-            .insert({"phone_id": phone_id})
+            .insert({
+                "phone_id":             phone_id,
+                "tier":                 TIER_PRO,
+                "trial_ends_at":        new_user_trial_ends_at(),
+                "is_paid":              False,
+                "trial_reminders_sent": 0,
+            })
             .execute()
     )
     user_id = insert_result.data[0]["id"]
@@ -83,7 +89,9 @@ async def get_user_record(phone: str) -> Optional[dict]:
     sb = get_supabase()
     result = await asyncio.to_thread(
         lambda: sb.table("expense_users")
-            .select("id, tier, entry_count")
+            .select(
+                "id, tier, entry_count, trial_ends_at, is_paid, trial_reminders_sent"
+            )
             .eq("phone_id", phone_id)
             .execute()
     )
@@ -101,7 +109,12 @@ async def set_user_tier(phone: str, tier: str) -> bool:
     phone_id = get_phone_lookup_id(phone)
     sb = get_supabase()
 
-    updates: dict = {"tier": tier}
+    updates: dict = {
+        "tier":                 tier,
+        "is_paid":              True,
+        "trial_ends_at":        None,
+        "trial_reminders_sent": 0,
+    }
     if old_tier != tier:
         updates["entry_count"] = 0
 
@@ -118,6 +131,73 @@ async def set_user_tier(phone: str, tier: str) -> bool:
         reset_entries=old_tier != tier,
     )
     return old_tier != tier
+
+
+async def expire_trial_for_phone(phone: str) -> bool:
+    """Downgrade expired trial to free. Returns True if downgraded."""
+    record = await get_user_record(phone)
+    if not record or record.get("is_paid") or record.get("tier") != TIER_PRO:
+        return False
+
+    trial_ends = record.get("trial_ends_at")
+    if not trial_ends:
+        return False
+
+    ends = datetime.fromisoformat(trial_ends.replace("Z", "+00:00"))
+    if ends.tzinfo is None:
+        ends = ends.replace(tzinfo=timezone.utc)
+    if ends > datetime.now(timezone.utc):
+        return False
+
+    phone_id = get_phone_lookup_id(phone)
+    sb = get_supabase()
+    await asyncio.to_thread(
+        lambda: sb.table("expense_users")
+            .update({"tier": TIER_FREE, "trial_ends_at": None})
+            .eq("phone_id", phone_id)
+            .execute()
+    )
+    logger.info("Trial expired — downgraded to free", phone=safe_log_phone(phone))
+    return True
+
+
+async def expire_trials_bulk() -> int:
+    """Downgrade all users whose Pro trial has ended (cron safety net)."""
+    sb = get_supabase()
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _fetch_and_update():
+        rows = (
+            sb.table("expense_users")
+              .select("id")
+              .eq("tier", TIER_PRO)
+              .eq("is_paid", False)
+              .lt("trial_ends_at", now)
+              .execute()
+              .data
+            or []
+        )
+        if not rows:
+            return 0
+        ids = [r["id"] for r in rows]
+        sb.table("expense_users").update({
+            "tier": TIER_FREE,
+            "trial_ends_at": None,
+        }).in_("id", ids).execute()
+        return len(ids)
+
+    return await asyncio.to_thread(_fetch_and_update)
+
+
+async def update_trial_reminder_stage(phone: str, stage: int) -> None:
+    phone_id = get_phone_lookup_id(phone)
+    sb = get_supabase()
+    await asyncio.to_thread(
+        lambda: sb.table("expense_users")
+            .update({"trial_reminders_sent": stage})
+            .eq("phone_id", phone_id)
+            .execute()
+    )
 
 
 async def increment_entry_count(user_id: str) -> int:
