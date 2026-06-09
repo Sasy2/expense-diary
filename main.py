@@ -4,6 +4,7 @@ main.py — WhatsApp Expense Diary (FastAPI)
 Endpoints:
   GET  /whatsapp_handler    Meta webhook verification
   POST /whatsapp_handler    Inbound WhatsApp messages from Meta
+  GET  /payment/success     Browser return after Paystack payment
   POST /payment_webhook     Paystack charge.success webhook
   POST /monthly_cron        Monthly entry reset (external cron)
   GET  /health              Render health check
@@ -20,7 +21,7 @@ from datetime import datetime, timezone
 import structlog
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from structlog import get_logger
 
 from app.database import (
@@ -29,10 +30,10 @@ from app.database import (
     reset_all_entry_counts,
     get_users_for_monthly_summary,
     save_expense,
-    set_user_tier,
+
 )
 from app.handlers import detect_command, detect_greeting, handle_command, process_expense_message
-from app.messaging import build_greeting_reply, build_tier_confirmation, build_welcome, send_wa_text
+from app.messaging import build_greeting_reply, build_welcome, send_wa_text
 from app.models import (
     DbStatusResponse,
     ManualExpenseRequest,
@@ -40,8 +41,8 @@ from app.models import (
 )
 from app.parser import parse_expense
 from app.payments import (
-    extract_phone_from_webhook,
-    extract_tier_from_webhook,
+    process_successful_charge,
+    verify_transaction,
     verify_webhook_signature,
 )
 from app.security import assert_secrets_strength, safe_log_phone
@@ -197,6 +198,72 @@ async def _route_text(phone: str, text: str, input_method: str = "text") -> None
     await process_expense_message(phone, user_id, text, input_method)
 
 
+@app.get("/payment/success")
+async def payment_success(
+    reference: str | None = None,
+    trxref: str | None = None,
+):
+    """
+    Browser landing page after Paystack checkout.
+    Verifies the transaction and upgrades the user's tier (fallback if webhook fails).
+    """
+    ref = (reference or trxref or "").strip()
+    if not ref:
+        return HTMLResponse(
+            "<h1>Payment reference missing</h1>"
+            "<p>Return to WhatsApp and send UPGRADE if your plan is not active yet.</p>",
+            status_code=400,
+        )
+
+    try:
+        charge = await verify_transaction(ref)
+    except Exception as exc:
+        logger.error("Paystack verify failed", error=str(exc), reference=ref[:12])
+        return HTMLResponse(
+            "<h1>Could not verify payment</h1>"
+            "<p>Your payment may still have gone through. "
+            "Return to WhatsApp — we will confirm shortly, or send UPGRADE to check.</p>",
+            status_code=502,
+        )
+
+    if not charge:
+        return HTMLResponse(
+            "<h1>Payment not completed</h1>"
+            "<p>If money was deducted, wait a minute and refresh, or contact support.</p>",
+            status_code=400,
+        )
+
+    try:
+        await process_successful_charge(charge)
+    except Exception as exc:
+        logger.error("Tier upgrade after payment failed", error=str(exc))
+        return HTMLResponse(
+            "<h1>Payment received</h1>"
+            "<p>We could not activate your plan automatically. "
+            "Please message us on WhatsApp with your payment reference.</p>",
+            status_code=500,
+        )
+
+    return HTMLResponse(
+        "<html><body style='font-family:sans-serif;text-align:center;padding:48px'>"
+        "<h1>Payment successful!</h1>"
+        "<p>Your plan is now active. Return to <strong>WhatsApp</strong> and start logging expenses.</p>"
+        "</body></html>"
+    )
+
+
+@app.get("/payment_webhook")
+async def payment_webhook_info():
+    """Paystack webhooks use POST only — this explains the Method Not Allowed confusion."""
+    return HTMLResponse(
+        "<html><body style='font-family:sans-serif;padding:32px'>"
+        "<h1>Paystack webhook endpoint</h1>"
+        "<p>This URL is for Paystack server notifications (POST only), not for opening in a browser.</p>"
+        "<p>After paying, you should see a <strong>Payment successful</strong> page, then return to WhatsApp.</p>"
+        "</body></html>"
+    )
+
+
 @app.post("/payment_webhook")
 async def payment_webhook(request: Request):
     """Receives Paystack charge.success events and upgrades user tier."""
@@ -216,14 +283,7 @@ async def payment_webhook(request: Request):
     logger.info("Paystack webhook", event=event)
 
     if event == "charge.success":
-        phone = extract_phone_from_webhook(payload)
-        if phone:
-            tier = extract_tier_from_webhook(payload)
-            await set_user_tier(phone, tier)
-            await send_wa_text(phone, build_tier_confirmation(tier))
-            logger.info("Tier upgrade complete", phone=safe_log_phone(phone), tier=tier)
-        else:
-            logger.warning("Paystack webhook missing phone in metadata")
+        await process_successful_charge(payload.get("data") or {})
 
     return {"status": "ok"}
 

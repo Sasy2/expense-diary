@@ -90,17 +90,34 @@ async def get_user_record(phone: str) -> Optional[dict]:
     return result.data[0] if result.data else None
 
 
-async def set_user_tier(phone: str, tier: str) -> None:
-    """Set a user's subscription tier after successful Paystack payment."""
+async def set_user_tier(phone: str, tier: str) -> bool:
+    """
+    Set a user's subscription tier after successful Paystack payment.
+    Resets entry_count when the tier actually changes so paid users can log again.
+    Returns True if the tier changed.
+    """
+    record = await get_user_record(phone)
+    old_tier = (record.get("tier") if record else None) or "free"
     phone_id = get_phone_lookup_id(phone)
     sb = get_supabase()
+
+    updates: dict = {"tier": tier}
+    if old_tier != tier:
+        updates["entry_count"] = 0
+
     await asyncio.to_thread(
         lambda: sb.table("expense_users")
-            .update({"tier": tier})
+            .update(updates)
             .eq("phone_id", phone_id)
             .execute()
     )
-    logger.info("User tier updated", phone=safe_log_phone(phone), tier=tier)
+    logger.info(
+        "User tier updated",
+        phone=safe_log_phone(phone),
+        tier=tier,
+        reset_entries=old_tier != tier,
+    )
+    return old_tier != tier
 
 
 async def increment_entry_count(user_id: str) -> int:
