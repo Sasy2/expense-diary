@@ -51,8 +51,45 @@ from app.payments import create_payment_link
 
 logger = get_logger()
 
-_LAST_CMD = re.compile(r"^last\s*(\d+)$", re.IGNORECASE)
 _MAX_LAST_N = 50
+
+# Compile regexes for each command to handle natural language variations
+_LAST_CMD = re.compile(
+    r"^\s*(?:show\s+|get\s+)?last\s*(\d+)(?:\s*(?:entries|transactions|items))?\s*$",
+    re.IGNORECASE
+)
+
+_CMD_PATTERNS = {
+    "UNDO": re.compile(
+        r"^\s*(?:please\s+|can\s+you\s+)?(?:undo|delete|remove|cancel)(?:\s+last|\s+that|\s+transaction|\s+entry)?(?:\s+please|\s+thanks|\s+thank\s+you)?\s*$",
+        re.IGNORECASE
+    ),
+    "HELP": re.compile(
+        r"^\s*(?:please\s+|get\s+|show\s+)?(?:help|info|instructions|commands|guide|menu)(?:\s+me|\s+please|\s+thanks|\s+thank\s+you)?\s*$"
+        r"|^\s*(?:how\s+(?:to\s+use|does\s+this\s+work|do\s+i\s+use))\s*$",
+        re.IGNORECASE
+    ),
+    "TOTAL": re.compile(
+        r"^\s*(?:show\s+|get\s+|my\s+|view\s+)?(?:total|totals|summary|summaries|recap|breakdown)(?:\s+for\s+this\s+month|\s+this\s+month)?(?:\s+please|\s+thanks)?\s*$",
+        re.IGNORECASE
+    ),
+    "REPORT": re.compile(
+        r"^\s*(?:show\s+|get\s+|download\s+|export\s+|send\s+)?(?:report|csv|excel|sheet)(?:\s+file|\s+please|\s+thanks)?\s*$",
+        re.IGNORECASE
+    ),
+    "UPGRADE": re.compile(
+        r"^\s*(?:show\s+|get\s+|view\s+|how\s+to\s+)?(?:upgrade|plans|prices|pricing|subscription|subscribe)(?:\s+plan|\s+please|\s+thanks)?\s*$",
+        re.IGNORECASE
+    ),
+    "PRO": re.compile(
+        r"^\s*(?:upgrade\s+to\s+|get\s+)?pro(?:\s+plan)?(?:\s+please|\s+thanks)?\s*$",
+        re.IGNORECASE
+    ),
+    "PREMIUM": re.compile(
+        r"^\s*(?:upgrade\s+to\s+|get\s+)?premium(?:\s+plan)?(?:\s+please|\s+thanks)?\s*$",
+        re.IGNORECASE
+    ),
+}
 
 
 def _user_tier(record: dict | None) -> str:
@@ -64,16 +101,27 @@ def _user_tier(record: dict | None) -> str:
 def detect_command(text: str) -> Optional[str]:
     """
     Normalise text and return a command name if recognised, else None.
-    LAST commands: "last 5", "last 10", "LAST5", "last20" → "LAST:5", "LAST:10", etc.
+    Supports natural language variations for LAST, UNDO, HELP, TOTAL, REPORT, and UPGRADE.
     """
     stripped = text.strip()
+    
+    # 1. Match LAST command (e.g. "last 5", "show last 10 entries", "last5")
     last_match = _LAST_CMD.match(stripped)
     if last_match:
         n = min(max(int(last_match.group(1)), 1), _MAX_LAST_N)
         return f"LAST:{n}"
 
+    # 2. Match regex patterns for other commands
+    for cmd, pattern in _CMD_PATTERNS.items():
+        if pattern.match(stripped):
+            # Resolve aliases
+            if cmd == "UNDO":
+                return "UNDO"
+            return cmd
+
+    # 3. Fallback: space-stripped exact match
     normalised = re.sub(r"\s+", "", stripped.upper())
-    return {
+    fallback_map = {
         "HELP":    "HELP",
         "TOTAL":   "TOTAL",
         "REPORT":  "REPORT",
@@ -83,7 +131,8 @@ def detect_command(text: str) -> Optional[str]:
         "PREMIUM": "PREMIUM",
         "UNDO":    "UNDO",
         "DELETE":  "UNDO",
-    }.get(normalised)
+    }
+    return fallback_map.get(normalised)
 
 
 _GREETINGS = frozenset({

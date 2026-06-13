@@ -31,7 +31,7 @@ async def parse_expense(text: str) -> ExpenseEntry:
     Extract a structured expense or income entry from a natural language message.
     Raises OpenAI exceptions on network/API failure — caller must handle.
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     client = get_openai_client()
 
     response = await asyncio.wait_for(
@@ -52,7 +52,7 @@ async def parse_expense(text: str) -> ExpenseEntry:
                         - Choose the best category from: {', '.join(CATEGORIES)}
                         - If no merchant is mentioned, use an empty string.
                         - Keep description concise (max 60 chars).
-                        - Today is {today}.\
+                        - Current time (UTC) is {now_utc}. Resolve relative dates/times (e.g. 'yesterday', '2 hours ago', 'last Friday at 3pm') using this current time context. Default to this current time if no date/time is specified in the message.\
                     """),
                 },
                 {"role": "user", "content": text},

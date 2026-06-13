@@ -3,6 +3,7 @@ models.py — Pydantic models for API requests, responses, and AI structured out
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -58,7 +59,7 @@ def is_trial_user(record: dict | None) -> bool:
     )
 
 
-CATEGORIES = [
+CategoryLiteral = Literal[
     "Food & Dining",
     "Transport",
     "Internet & Data",
@@ -70,19 +71,21 @@ CATEGORIES = [
     "Healthcare",
     "Shopping",
     "Rent & Housing",
-    "Income",
     "Other",
 ]
+
+CATEGORIES = list(get_args(CategoryLiteral))
 
 # ── AI Parsing ────────────────────────────────────────────────────────────────
 
 class ExpenseEntry(BaseModel):
     amount:      float = Field(description="Positive numeric amount")
     currency:    str   = Field(description="Currency code, default GHS")
-    category:    str   = Field(description=f"One of: {', '.join(CATEGORIES)}")
+    category:    CategoryLiteral = Field(description=f"One of: {', '.join(CATEGORIES)}")
     merchant:    str   = Field(description="Merchant or vendor name, empty string if unknown")
     description: str   = Field(description="Short description, max 60 chars")
-    entry_type:  str   = Field(description="'Income' or 'Expense'")
+    entry_type:  Literal["Income", "Expense"] = Field(description="'Income' or 'Expense'")
+    timestamp:   str   = Field(description="ISO 8601 date-time string (UTC) of the transaction, resolved relative to the current time context. If no date/time is mentioned, default to the current time.")
 
 
 # ── REST API ──────────────────────────────────────────────────────────────────
@@ -97,9 +100,9 @@ class ManualExpenseResponse(BaseModel):
     logged:     str
     amount:     float
     currency:   str
-    category:   str
+    category:   CategoryLiteral
     merchant:   str
-    entry_type: str
+    entry_type: Literal["Income", "Expense"]
 
 
 class DbStatusResponse(BaseModel):

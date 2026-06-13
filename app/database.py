@@ -303,7 +303,17 @@ async def save_expense(
     Encrypt all financial fields and insert into Supabase.
     Only month_year (YYYY-MM) is stored plaintext for filtering.
     """
-    month_year = datetime.now(timezone.utc).strftime("%Y-%m")
+    # Parse the resolved timestamp from the entry, fallback to current time on error
+    try:
+        iso_str = entry.timestamp.replace("Z", "+00:00")
+        entry_dt = datetime.fromisoformat(iso_str)
+        if entry_dt.tzinfo is None:
+            entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+        entry_dt = entry_dt.astimezone(timezone.utc)
+    except Exception:
+        entry_dt = datetime.now(timezone.utc)
+
+    month_year = entry_dt.strftime("%Y-%m")
     payload = {
         "amount":       round(entry.amount, 2),
         "currency":     entry.currency.upper(),
@@ -312,7 +322,7 @@ async def save_expense(
         "description":  entry.description,
         "entry_type":   entry.entry_type,
         "input_method": input_method,
-        "timestamp":    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "timestamp":    entry_dt.strftime("%Y-%m-%d %H:%M UTC"),
     }
     encrypted = encrypt_for_user(payload, phone)
     sb = get_supabase()
@@ -321,6 +331,7 @@ async def save_expense(
             "user_id":           user_id,
             "encrypted_payload": encrypted,
             "month_year":        month_year,
+            "logged_at":         entry_dt.isoformat(),
         }).execute()
     )
     logger.info(

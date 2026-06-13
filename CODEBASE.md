@@ -108,7 +108,7 @@ User pays ──► Paystack ──POST──► /payment_webhook
 - `can_export_csv(tier)` — Premium only
 - `gets_monthly_summary(tier)` — Pro + Premium
 
-**Categories:** Food & Dining, Transport, Internet & Data, Utilities, Office Supplies, Marketing, Professional Services, Entertainment, Healthcare, Shopping, Rent & Housing, Income, Other
+**Categories:** Food & Dining, Transport, Internet & Data, Utilities, Office Supplies, Marketing, Professional Services, Entertainment, Healthcare, Shopping, Rent & Housing, Other
 
 **Models:** `ExpenseEntry`, `ManualExpenseRequest`, `ManualExpenseResponse`, `DbStatusResponse`, `PaystackWebhookRequest`
 
