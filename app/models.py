@@ -79,7 +79,7 @@ CATEGORIES = list(get_args(CategoryLiteral))
 # ── AI Parsing ────────────────────────────────────────────────────────────────
 
 class ExpenseEntry(BaseModel):
-    amount:      float = Field(description="Positive numeric amount")
+    amount:      float = Field(description="Non-negative numeric amount (>= 0)")
     currency:    str   = Field(description="Currency code, default GHS")
     category:    CategoryLiteral = Field(description=f"One of: {', '.join(CATEGORIES)}")
     merchant:    str   = Field(description="Merchant or vendor name, empty string if unknown")

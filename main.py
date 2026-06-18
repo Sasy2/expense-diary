@@ -347,11 +347,11 @@ async def log_expense_manually(req: ManualExpenseRequest) -> ManualExpenseRespon
     if not entries:
         raise HTTPException(status_code=422, detail="No transactions found in message")
 
-    for entry in entries:
+    for i, entry in enumerate(entries):
         # Zero amount validation check
         if entry.amount < 0 or (entry.amount == 0 and not re.search(r"\b0\b|\bzero\b|\bfree\b", req.message, re.IGNORECASE)):
             continue
-        await save_expense(phone, user_id, entry, "manual")
+        await save_expense(phone, user_id, entry, "manual", offset_seconds=i)
 
     first = entries[0]
     return ManualExpenseResponse(

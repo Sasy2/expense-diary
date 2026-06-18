@@ -383,7 +383,7 @@ async def process_expense_message(
         await send_wa_text(phone, build_not_an_expense_hint())
         return
 
-    for entry in entries:
+    for i, entry in enumerate(entries):
         # Re-check limit for each item in the batch
         record = await get_user_record(phone)
         entry_count = record.get("entry_count", 0) if record else 0
@@ -398,7 +398,7 @@ async def process_expense_message(
             await send_wa_text(phone, build_not_an_expense_hint())
             continue
 
-        await save_expense(phone, user_id, entry, input_method)
+        await save_expense(phone, user_id, entry, input_method, offset_seconds=i)
         new_count = await increment_entry_count(user_id)
 
         confirmation = build_confirmation(entry)

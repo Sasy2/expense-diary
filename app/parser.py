@@ -66,7 +66,7 @@ async def parse_expense(text: str) -> list[ExpenseEntry]:
 
                         Rules for each entry:
                         - Default currency is GHS (Ghana Cedis) unless clearly stated otherwise.
-                        - Amount must always be a positive number.
+                        - Amount must be a non-negative number (>= 0).
                         - entry_type is 'Income' if they received money, otherwise 'Expense'.
                         - Choose the best category from: {', '.join(CATEGORIES)}
                         - If no merchant is mentioned, use an empty string.

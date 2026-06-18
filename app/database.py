@@ -298,6 +298,7 @@ async def save_expense(
     user_id: str,
     entry: ExpenseEntry,
     input_method: str,
+    offset_seconds: int = 0,
 ) -> None:
     """
     Encrypt all financial fields and insert into Supabase.
@@ -312,6 +313,10 @@ async def save_expense(
         entry_dt = entry_dt.astimezone(timezone.utc)
     except Exception:
         entry_dt = datetime.now(timezone.utc)
+
+    if offset_seconds:
+        from datetime import timedelta
+        entry_dt += timedelta(seconds=offset_seconds)
 
     month_year = entry_dt.strftime("%Y-%m")
     payload = {
