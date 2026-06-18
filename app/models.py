@@ -88,6 +88,10 @@ class ExpenseEntry(BaseModel):
     timestamp:   str   = Field(description="ISO 8601 date-time string (UTC) of the transaction, resolved relative to the current time context. If no date/time is mentioned, default to the current time.")
 
 
+class ExpenseDiaryPayload(BaseModel):
+    entries: list[ExpenseEntry] = Field(description="List of structured expense/income entries extracted from the message. Can be empty if no transaction is found.")
+
+
 # ── REST API ──────────────────────────────────────────────────────────────────
 
 class ManualExpenseRequest(BaseModel):

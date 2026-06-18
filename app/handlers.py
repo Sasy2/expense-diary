@@ -61,24 +61,24 @@ _LAST_CMD = re.compile(
 
 _CMD_PATTERNS = {
     "UNDO": re.compile(
-        r"^\s*(?:please\s+|can\s+you\s+)?(?:undo|delete|remove|cancel)(?:\s+last|\s+that|\s+transaction|\s+entry)?(?:\s+please|\s+thanks|\s+thank\s+you)?\s*$",
+        r"^\s*(?:please\s+|can\s+you\s+)?(?:undo|delete|remove|cancel)(?:\s+(?:my|the|that|last|transaction|entry|latest))*\s*(?:please|thanks|thank\s+you)?\s*$",
         re.IGNORECASE
     ),
     "HELP": re.compile(
-        r"^\s*(?:please\s+|get\s+|show\s+)?(?:help|info|instructions|commands|guide|menu)(?:\s+me|\s+please|\s+thanks|\s+thank\s+you)?\s*$"
-        r"|^\s*(?:how\s+(?:to\s+use|does\s+this\s+work|do\s+i\s+use))\s*$",
+        r"^\s*(?:please\s+|get\s+|show\s+)?(?:help|info|instructions|commands|guide|menu)(?:\s+(?:me|please|thanks|thank\s+you|us))*\s*$"
+        r"|^\s*(?:how\s+(?:to\s+use|does\s+this\s+work|do\s+i\s+use|it\s+works))\s*$",
         re.IGNORECASE
     ),
     "TOTAL": re.compile(
-        r"^\s*(?:show\s+|get\s+|my\s+|view\s+)?(?:total|totals|summary|summaries|recap|breakdown)(?:\s+for\s+this\s+month|\s+this\s+month)?(?:\s+please|\s+thanks)?\s*$",
+        r"^\s*(?:what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)?(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:for\s+)?(?:this\s+)?month)?\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
     "REPORT": re.compile(
-        r"^\s*(?:show\s+|get\s+|download\s+|export\s+|send\s+)?(?:report|csv|excel|sheet)(?:\s+file|\s+please|\s+thanks)?\s*$",
+        r"^\s*(?:show\s+|get\s+|download\s+|export\s+|send\s+)?(?:my\s+|the\s+)*(?:report|csv|excel|sheet)(?:\s+file|\s+please|\s+thanks)?\s*$",
         re.IGNORECASE
     ),
     "UPGRADE": re.compile(
-        r"^\s*(?:show\s+|get\s+|view\s+|how\s+to\s+)?(?:upgrade|plans|prices|pricing|subscription|subscribe)(?:\s+plan|\s+please|\s+thanks)?\s*$",
+        r"^\s*(?:show\s+|get\s+|view\s+|how\s+to\s+)?(?:my\s+|the\s+)*(?:upgrade|plans|prices|pricing|subscription|subscribe)(?:\s+plan|\s+please|\s+thanks)?\s*$",
         re.IGNORECASE
     ),
     "PRO": re.compile(
@@ -103,7 +103,7 @@ def detect_command(text: str) -> Optional[str]:
     Normalise text and return a command name if recognised, else None.
     Supports natural language variations for LAST, UNDO, HELP, TOTAL, REPORT, and UPGRADE.
     """
-    stripped = text.strip()
+    stripped = text.strip().rstrip("?.!").strip()
     
     # 1. Match LAST command (e.g. "last 5", "show last 10 entries", "last5")
     last_match = _LAST_CMD.match(stripped)
@@ -341,9 +341,9 @@ async def process_expense_message(
     """
     Full expense pipeline:
       1. Check entry limit for the user's tier
-      2. Parse with GPT-4.1-mini
-      3. Encrypt and save to Supabase
-      4. Increment entry counter
+      2. Parse with GPT-4.1-mini (supports multiple entries)
+      3. Encrypt and save each entry to Supabase
+      4. Increment entry counter for each entry
       5. Send confirmation (+ upgrade nudge if approaching limit)
     """
     record = await get_user_record(phone)
@@ -357,7 +357,16 @@ async def process_expense_message(
         return
 
     try:
-        entry = await parse_expense(text)
+        entries = await parse_expense(text)
+    except ValueError as exc:
+        if "injection" in str(exc):
+            logger.warning("Prompt injection blocked", text=text)
+            await send_wa_text(
+                phone,
+                "\u274c Sorry, I cannot process messages containing system overrides or instructions."
+            )
+            return
+        raise exc
     except Exception as exc:
         logger.error("Parse failed", error=str(exc))
         await send_wa_text(
@@ -369,16 +378,31 @@ async def process_expense_message(
         )
         return
 
-    if entry.amount <= 0:
-        logger.info("Rejected zero-amount message", phone=phone[-4:] if len(phone) >= 4 else "****")
+    if not entries:
+        logger.info("No entries parsed", phone=phone[-4:] if len(phone) >= 4 else "****")
         await send_wa_text(phone, build_not_an_expense_hint())
         return
 
-    await save_expense(phone, user_id, entry, input_method)
-    new_count = await increment_entry_count(user_id)
+    for entry in entries:
+        # Re-check limit for each item in the batch
+        record = await get_user_record(phone)
+        entry_count = record.get("entry_count", 0) if record else 0
+        if entry_count >= limit:
+            logger.info("Entry limit reached mid-batch", user_id=user_id[:8], tier=tier)
+            await _send_limit_reached(phone, tier)
+            break
 
-    confirmation = build_confirmation(entry)
-    if new_count >= nudge_threshold(tier) and new_count < limit:
-        confirmation += build_upgrade_nudge(new_count, tier)
+        # Zero amount validation check: must contain "0", "zero", or "free" if amount is 0
+        if entry.amount < 0 or (entry.amount == 0 and not re.search(r"\b0\b|\bzero\b|\bfree\b", text, re.IGNORECASE)):
+            logger.info("Rejected zero-amount message", phone=phone[-4:] if len(phone) >= 4 else "****")
+            await send_wa_text(phone, build_not_an_expense_hint())
+            continue
 
-    await send_wa_text(phone, confirmation)
+        await save_expense(phone, user_id, entry, input_method)
+        new_count = await increment_entry_count(user_id)
+
+        confirmation = build_confirmation(entry)
+        if new_count >= nudge_threshold(tier) and new_count < limit:
+            confirmation += build_upgrade_nudge(new_count, tier)
+
+        await send_wa_text(phone, confirmation)

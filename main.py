@@ -337,17 +337,31 @@ async def log_expense_manually(req: ManualExpenseRequest) -> ManualExpenseRespon
         raise HTTPException(status_code=422, detail="Invalid phone_number format")
 
     user_id, _ = await get_or_create_user(phone)
-    entry = await parse_expense(req.message)
-    await save_expense(phone, user_id, entry, "manual")
+    try:
+        entries = await parse_expense(req.message)
+    except ValueError as exc:
+        if "injection" in str(exc):
+            raise HTTPException(status_code=400, detail=str(exc))
+        raise exc
 
+    if not entries:
+        raise HTTPException(status_code=422, detail="No transactions found in message")
+
+    for entry in entries:
+        # Zero amount validation check
+        if entry.amount < 0 or (entry.amount == 0 and not re.search(r"\b0\b|\bzero\b|\bfree\b", req.message, re.IGNORECASE)):
+            continue
+        await save_expense(phone, user_id, entry, "manual")
+
+    first = entries[0]
     return ManualExpenseResponse(
         success=True,
-        logged=f"{entry.entry_type}: {entry.currency} {entry.amount:,.2f} · {entry.category}",
-        amount=entry.amount,
-        currency=entry.currency,
-        category=entry.category,
-        merchant=entry.merchant,
-        entry_type=entry.entry_type,
+        logged=f"{first.entry_type}: {first.currency} {first.amount:,.2f} · {first.category}",
+        amount=first.amount,
+        currency=first.currency,
+        category=first.category,
+        merchant=first.merchant,
+        entry_type=first.entry_type,
     )
 
 
