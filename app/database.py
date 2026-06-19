@@ -226,23 +226,34 @@ async def decrement_entry_count(user_id: str) -> int:
     return result.data if isinstance(result.data, int) else 0
 
 
-async def delete_last_expense(phone: str, user_id: str) -> Optional[dict]:
-    """Delete the most recent transaction and return its decrypted data, or None."""
+async def delete_last_expense(phone: str, user_id: str) -> Optional[list[dict]]:
+    """Delete the most recent transaction (or all transactions in the last batch) and return the decrypted data list."""
     rows = await get_user_expenses(phone, limit=1, order_desc=True)
     if not rows:
         return None
 
-    expense_id = rows[0]["id"]
+    last_entry = rows[0]
+    batch_id = last_entry.get("batch_id")
+
+    if batch_id:
+        # Fetch recent entries to find all that share this batch_id
+        # Limit 50 should be more than enough for any single batch
+        recent_rows = await get_user_expenses(phone, limit=50, order_desc=True)
+        to_delete = [r for r in recent_rows if r.get("batch_id") == batch_id]
+    else:
+        to_delete = [last_entry]
+
+    expense_ids = [r["id"] for r in to_delete]
     sb = get_supabase()
     await asyncio.to_thread(
         lambda: sb.table("expenses")
             .delete()
-            .eq("id", expense_id)
+            .in_("id", expense_ids)
             .eq("user_id", user_id)
             .execute()
     )
-    logger.info("Transaction deleted (undo)", phone=safe_log_phone(phone), expense_id=expense_id)
-    return rows[0]
+    logger.info("Transactions deleted (undo)", phone=safe_log_phone(phone), count=len(expense_ids))
+    return to_delete
 
 
 async def increment_entry_count(user_id: str) -> int:
@@ -298,6 +309,7 @@ async def save_expense(
     user_id: str,
     entry: ExpenseEntry,
     input_method: str,
+    batch_id: Optional[str] = None,
     offset_seconds: int = 0,
 ) -> None:
     """
@@ -329,6 +341,8 @@ async def save_expense(
         "input_method": input_method,
         "timestamp":    entry_dt.strftime("%Y-%m-%d %H:%M UTC"),
     }
+    if batch_id:
+        payload["batch_id"] = batch_id
     encrypted = encrypt_for_user(payload, phone)
     sb = get_supabase()
     await asyncio.to_thread(

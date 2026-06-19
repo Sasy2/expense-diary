@@ -226,21 +226,47 @@ def build_last_n(rows: list[dict], n: int = 5) -> str:
     return "\n".join(lines)
 
 
-def build_undo_confirmation(deleted: dict) -> str:
-    try:
-        amt = float(deleted.get("amount", 0))
-    except (ValueError, TypeError):
-        amt = 0.0
-    currency = str(deleted.get("currency", "GHS"))
-    etype = str(deleted.get("entry_type", "Expense"))
-    desc = str(deleted.get("description", ""))
-    return (
-        f"\u2705 *Undone* \u2014 last transaction removed.\n\n"
-        f"Removed: {etype} {currency} {amt:,.2f}\n"
-        f"{desc}\n\n"
-        "Your monthly transaction count was restored.\n"
-        "Re-send the correct entry if needed."
-    )
+def build_undo_confirmation(deleted: list[dict] | dict) -> str:
+    if isinstance(deleted, dict):
+        deleted_list = [deleted]
+    else:
+        deleted_list = deleted
+
+    if len(deleted_list) == 1:
+        single = deleted_list[0]
+        try:
+            amt = float(single.get("amount", 0))
+        except (ValueError, TypeError):
+            amt = 0.0
+        currency = str(single.get("currency", "GHS"))
+        etype = str(single.get("entry_type", "Expense"))
+        desc = str(single.get("description", ""))
+        return (
+            f"\u2705 *Undone* \u2014 last transaction removed.\n\n"
+            f"Removed: {etype} {currency} {amt:,.2f}\n"
+            f"{desc}\n\n"
+            "Your monthly transaction count was restored.\n"
+            "Re-send the correct entry if needed."
+        )
+    else:
+        lines = []
+        for item in deleted_list:
+            try:
+                amt = float(item.get("amount", 0))
+            except (ValueError, TypeError):
+                amt = 0.0
+            currency = str(item.get("currency", "GHS"))
+            etype = str(item.get("entry_type", "Expense"))
+            desc = str(item.get("description", ""))
+            lines.append(f"  \u2022 {etype}: {currency} {amt:,.2f} \u00b7 {desc}")
+        
+        details = "\n".join(lines)
+        return (
+            f"\u2705 *Undone* \u2014 last batch of transactions removed.\n\n"
+            f"Removed:\n{details}\n\n"
+            "Your monthly transaction count was restored.\n"
+            "Re-send the correct entry if needed."
+        )
 
 
 def build_confirmation(entry) -> str:

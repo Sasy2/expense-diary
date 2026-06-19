@@ -15,6 +15,7 @@ Endpoints:
 import json
 import os
 import re
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -347,11 +348,12 @@ async def log_expense_manually(req: ManualExpenseRequest) -> ManualExpenseRespon
     if not entries:
         raise HTTPException(status_code=422, detail="No transactions found in message")
 
+    batch_id = str(uuid.uuid4())
     for i, entry in enumerate(entries):
         # Zero amount validation check
         if entry.amount < 0 or (entry.amount == 0 and not re.search(r"\b0\b|\bzero\b|\bfree\b", req.message, re.IGNORECASE)):
             continue
-        await save_expense(phone, user_id, entry, "manual", offset_seconds=i)
+        await save_expense(phone, user_id, entry, "manual", batch_id=batch_id, offset_seconds=i)
 
     first = entries[0]
     return ManualExpenseResponse(

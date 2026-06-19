@@ -7,6 +7,7 @@ process_expense_message() → Parse → check limits → encrypt → save → co
 """
 
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -294,7 +295,8 @@ async def handle_command(phone: str, command: str) -> None:
                 "Nothing to undo — you have no transactions logged yet."
             )
             return
-        await decrement_entry_count(record["id"])
+        for _ in deleted:
+            await decrement_entry_count(record["id"])
         await send_wa_text(phone, build_undo_confirmation(deleted))
         return
 
@@ -383,6 +385,7 @@ async def process_expense_message(
         await send_wa_text(phone, build_not_an_expense_hint())
         return
 
+    batch_id = str(uuid.uuid4())
     for i, entry in enumerate(entries):
         # Re-check limit for each item in the batch
         record = await get_user_record(phone)
@@ -398,7 +401,7 @@ async def process_expense_message(
             await send_wa_text(phone, build_not_an_expense_hint())
             continue
 
-        await save_expense(phone, user_id, entry, input_method, offset_seconds=i)
+        await save_expense(phone, user_id, entry, input_method, batch_id=batch_id, offset_seconds=i)
         new_count = await increment_entry_count(user_id)
 
         confirmation = build_confirmation(entry)
