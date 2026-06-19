@@ -40,3 +40,30 @@ CREATE INDEX IF NOT EXISTS idx_expenses_user_logged
 -- Service role key (used by server) bypasses RLS automatically
 ALTER TABLE expense_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE expenses      ENABLE ROW LEVEL SECURITY;
+
+-- Expense budgets table
+CREATE TABLE IF NOT EXISTS expense_budgets (
+    id            UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id       UUID        REFERENCES expense_users(id) ON DELETE CASCADE,
+    category      TEXT        NOT NULL,
+    limit_amount  NUMERIC     NOT NULL,
+    month_year    TEXT        NOT NULL, -- e.g. "2026-06"
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, category, month_year)
+);
+
+-- Savings goals table
+CREATE TABLE IF NOT EXISTS savings_goals (
+    id             UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id        UUID        REFERENCES expense_users(id) ON DELETE CASCADE,
+    name           TEXT        NOT NULL,
+    target_amount  NUMERIC     NOT NULL,
+    current_amount NUMERIC     DEFAULT 0.0 NOT NULL,
+    target_date    TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS for the new tables
+ALTER TABLE expense_budgets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE savings_goals   ENABLE ROW LEVEL SECURITY;
+

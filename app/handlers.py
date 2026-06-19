@@ -66,16 +66,16 @@ _CMD_PATTERNS = {
         re.IGNORECASE
     ),
     "HELP": re.compile(
-        r"^\s*(?:please\s+|get\s+|show\s+)?(?:help|info|instructions|commands|guide|menu)(?:\s+(?:me|please|thanks|thank\s+you|us))*\s*$"
-        r"|^\s*(?:how\s+(?:to\s+use|does\s+this\s+work|do\s+i\s+use|it\s+works))\s*$",
+        r"^\s*(?:please\s+|get\s+|show\s+)?(?:help|info|instructions|commands|guide|menu)(?:\s+(?:help|info|instructions|commands|guide|menu|me|please|thanks|thank\s+you|us))*\s*$"
+        r"|^\s*how\s+(?:to\s+use|does\s+this\s+work|do\s+i\s+use|it\s+works|to|do)(?:\s+\w+)*\s*$",
         re.IGNORECASE
     ),
     "TOTAL": re.compile(
-        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:for\s+)?(?:this\s+)?month)?\s*(?:please|thanks)?\s*$",
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:total|totals|summary|summaries|recap|breakdown|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
     "REPORT": re.compile(
-        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|download\s+|export\s+|send\s+|view\s+)*(?:my\s+|the\s+)*(?:report|csv|excel|sheet)(?:\s+(?:file|for\s+this\s+month|this\s+month))*\s*(?:please|thanks)?\s*$",
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|download\s+|export\s+|send\s+|view\s+)*(?:my\s+|the\s+)*(?:report|csv|excel|sheet)(?:\s+(?:report|csv|excel|sheet|file|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
     "UPGRADE": re.compile(
@@ -88,6 +88,10 @@ _CMD_PATTERNS = {
     ),
     "PREMIUM": re.compile(
         r"^\s*(?:upgrade\s+to\s+|get\s+)?premium(?:\s+plan)?(?:\s+please|\s+thanks)?\s*$",
+        re.IGNORECASE
+    ),
+    "EXPLAIN": re.compile(
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what\s+is\s+my\s+|what's\s+|whats\s+|show\s+|get\s+|explain\s+|view\s+)*(?:my\s+|the\s+)*(?:explain|explanation|insights|insight|recap|summary|recap\s+insights)(?:\s+(?:report|recap|insights|insight|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
 }
@@ -104,7 +108,8 @@ def detect_command(text: str) -> Optional[str]:
     Normalise text and return a command name if recognised, else None.
     Supports natural language variations for LAST, UNDO, HELP, TOTAL, REPORT, and UPGRADE.
     """
-    stripped = text.strip().rstrip("?.!").strip()
+    cleaned = re.sub(r"[^\w\s]", "", text)
+    stripped = cleaned.strip()
     
     # 1. Match LAST command (e.g. "last 5", "show last 10 entries", "last5")
     last_match = _LAST_CMD.match(stripped)
@@ -123,15 +128,17 @@ def detect_command(text: str) -> Optional[str]:
     # 3. Fallback: space-stripped exact match
     normalised = re.sub(r"\s+", "", stripped.upper())
     fallback_map = {
-        "HELP":    "HELP",
-        "TOTAL":   "TOTAL",
-        "REPORT":  "REPORT",
-        "LAST5":   "LAST:5",
-        "UPGRADE": "UPGRADE",
-        "PRO":     "PRO",
-        "PREMIUM": "PREMIUM",
-        "UNDO":    "UNDO",
-        "DELETE":  "UNDO",
+        "HELP":     "HELP",
+        "TOTAL":    "TOTAL",
+        "REPORT":   "REPORT",
+        "LAST5":    "LAST:5",
+        "UPGRADE":  "UPGRADE",
+        "PRO":      "PRO",
+        "PREMIUM":  "PREMIUM",
+        "UNDO":     "UNDO",
+        "DELETE":   "UNDO",
+        "EXPLAIN":  "EXPLAIN",
+        "INSIGHTS": "EXPLAIN",
     }
     return fallback_map.get(normalised)
 
@@ -278,6 +285,31 @@ async def handle_command(phone: str, command: str) -> None:
         await send_wa_text(phone, build_total_summary(rows))
         return
 
+    if command == "EXPLAIN":
+        month_year = datetime.now(timezone.utc).strftime("%Y-%m")
+        month_name = datetime.now(timezone.utc).strftime("%B %Y")
+        rows = await get_user_expenses(phone, month_year=month_year)
+        if not rows:
+            await send_wa_text(
+                phone,
+                f"No transactions logged yet for {month_name}.\n\n"
+                "Keep logging your expenses and income to get insights!"
+            )
+            return
+        
+        from app.parser import generate_monthly_insights
+        try:
+            insights = await generate_monthly_insights(rows, month_name)
+            await send_wa_text(phone, insights)
+        except Exception as exc:
+            logger.error("Failed to generate monthly insights", error=str(exc))
+            await send_wa_text(
+                phone,
+                "\u274c Sorry, I couldn't generate insights right now. Please try again later."
+            )
+        return
+
+
     if command.startswith("LAST:"):
         n = int(command.split(":", 1)[1])
         rows = await get_user_expenses(phone, limit=n, order_desc=True)
@@ -359,7 +391,9 @@ async def process_expense_message(
         return
 
     try:
-        entries = await parse_expense(text)
+        last_expenses = await get_user_expenses(phone, limit=1, order_desc=True)
+        last_expense = last_expenses[0] if last_expenses else None
+        entries = await parse_expense(text, context=last_expense)
     except ValueError as exc:
         if "injection" in str(exc):
             logger.warning("Prompt injection blocked", text=text)
@@ -404,8 +438,66 @@ async def process_expense_message(
         await save_expense(phone, user_id, entry, input_method, batch_id=batch_id, offset_seconds=i)
         new_count = await increment_entry_count(user_id)
 
-        confirmation = build_confirmation(entry)
+        try:
+            iso_str = entry.timestamp.replace("Z", "+00:00")
+            entry_dt = datetime.fromisoformat(iso_str)
+            if entry_dt.tzinfo is None:
+                entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+            entry_dt = entry_dt.astimezone(timezone.utc)
+        except Exception:
+            entry_dt = datetime.now(timezone.utc)
+
+        month_year = entry_dt.strftime("%Y-%m")
+        monthly_expenses = await get_user_expenses(phone, month_year=month_year)
+
+        spent_this_month = sum(
+            float(e.get("amount", 0)) for e in monthly_expenses if e.get("entry_type") == "Expense"
+        )
+        show_hint = len(monthly_expenses) <= 3
+
+        # Query budget checks
+        from app.database import get_category_budget, get_savings_goals
+        budget_alert = ""
+        try:
+            category_budget = await get_category_budget(user_id, entry.category, month_year)
+            if category_budget:
+                limit_amount = float(category_budget.get("limit_amount", 0))
+                spent_in_category = sum(
+                    float(e.get("amount", 0)) for e in monthly_expenses
+                    if e.get("entry_type") == "Expense" and e.get("category") == entry.category
+                )
+                if spent_in_category > limit_amount:
+                    budget_alert = f"\n🔴 *Over Budget:* You've spent GHS {spent_in_category:,.2f} / GHS {limit_amount:,.2f} on {entry.category} this month!"
+                elif spent_in_category >= limit_amount * 0.8:
+                    budget_alert = f"\n⚠️ *Budget Alert:* You've spent GHS {spent_in_category:,.2f} / GHS {limit_amount:,.2f} on {entry.category} this month."
+        except Exception as e_bud:
+            logger.warning("Failed to query budget", error=str(e_bud))
+
+        # Query savings progress
+        savings_progress = ""
+        try:
+            goals = await get_savings_goals(user_id)
+            if goals:
+                lines = []
+                for goal in goals:
+                    target = float(goal.get("target_amount", 0))
+                    current = float(goal.get("current_amount", 0))
+                    pct = (current / target * 100) if target else 0
+                    lines.append(f"🎯 *Savings Goal '{goal.get('name')}'*: GHS {current:,.2f} / GHS {target:,.2f} saved ({pct:.0f}%)")
+                savings_progress = "\n" + "\n".join(lines)
+        except Exception as e_sav:
+            logger.warning("Failed to query savings goals", error=str(e_sav))
+
+        confirmation = build_confirmation(
+            entry,
+            spent_this_month=spent_this_month,
+            show_hint=show_hint,
+            budget_alert=budget_alert,
+            savings_progress=savings_progress,
+        )
+
         if new_count >= nudge_threshold(tier) and new_count < limit:
             confirmation += build_upgrade_nudge(new_count, tier)
 
         await send_wa_text(phone, confirmation)
+

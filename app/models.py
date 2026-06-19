@@ -3,7 +3,7 @@ models.py — Pydantic models for API requests, responses, and AI structured out
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Literal, get_args
+from typing import Literal, get_args, Optional
 
 from pydantic import BaseModel, Field
 
@@ -86,6 +86,9 @@ class ExpenseEntry(BaseModel):
     description: str   = Field(description="Short description, max 60 chars")
     entry_type:  Literal["Income", "Expense"] = Field(description="'Income' or 'Expense'")
     timestamp:   str   = Field(description="ISO 8601 date-time string (UTC) of the transaction, resolved relative to the current time context. If no date/time is mentioned, default to the current time.")
+    client_tag:  Optional[str] = Field(default=None, description="The name of the client associated with the transaction (e.g., 'Kwame', 'Ama'), or null if not applicable.")
+    classification: Literal["business", "personal"] = Field(default="personal", description="Classification of the transaction: 'business' or 'personal'. If it mentions a client name, business task, work expense, or business income, classify it as 'business', else default to 'personal'.")
+
 
 
 class ExpenseDiaryPayload(BaseModel):

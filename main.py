@@ -31,8 +31,9 @@ from app.database import (
     init_supabase,
     reset_all_entry_counts,
     save_expense,
+    get_user_expenses,
 )
-from app.summaries import send_monthly_recaps
+from app.summaries import send_monthly_recaps, send_weekly_recaps
 from app.trial import handle_trial_lifecycle, run_trial_expiry_cron
 from app.handlers import detect_command, detect_greeting, handle_command, process_expense_message
 from app.messaging import build_greeting_reply, build_welcome, send_wa_text
@@ -330,6 +331,27 @@ async def monthly_cron(request: Request):
     }
 
 
+@app.post("/weekly_cron")
+async def weekly_cron(request: Request):
+    """
+    Called by an external cron job on Monday mornings.
+    Sends last week's recap to Pro and Premium users.
+    """
+    secret = request.headers.get("x-cron-secret", "")
+    if secret != os.environ.get("CRON_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Unauthorised")
+
+    logger.info("Weekly cron started")
+    recaps_sent, eligible = await send_weekly_recaps()
+    logger.info("Weekly recaps complete", sent=recaps_sent, eligible=eligible)
+    return {
+        "status": "ok",
+        "recaps_sent": recaps_sent,
+        "recaps_eligible": eligible,
+    }
+
+
+
 @app.post("/", response_model=ManualExpenseResponse)
 async def log_expense_manually(req: ManualExpenseRequest) -> ManualExpenseResponse:
     """Log an expense via REST — useful for testing without WhatsApp."""
@@ -339,7 +361,9 @@ async def log_expense_manually(req: ManualExpenseRequest) -> ManualExpenseRespon
 
     user_id, _ = await get_or_create_user(phone)
     try:
-        entries = await parse_expense(req.message)
+        last_expenses = await get_user_expenses(phone, limit=1, order_desc=True)
+        last_expense = last_expenses[0] if last_expenses else None
+        entries = await parse_expense(req.message, context=last_expense)
     except ValueError as exc:
         if "injection" in str(exc):
             raise HTTPException(status_code=400, detail=str(exc))
@@ -365,6 +389,7 @@ async def log_expense_manually(req: ManualExpenseRequest) -> ManualExpenseRespon
         merchant=first.merchant,
         entry_type=first.entry_type,
     )
+
 
 
 @app.post("/status", response_model=DbStatusResponse)

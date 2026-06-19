@@ -96,11 +96,7 @@ def build_greeting_reply() -> str:
 
 def build_not_an_expense_hint() -> str:
     return (
-        "I didn't spot an amount in that message.\n\n"
-        "To KountN a transaction, include a number, e.g.:\n"
-        "  \u2022 '45 GHS lunch'\n"
-        "  \u2022 'Uber ride 35 cedis'\n\n"
-        "Type *HELP* for commands."
+        "Hmm, I couldn't find an amount — did you mean to log something? Try '45 GHS lunch' 😊"
     )
 
 
@@ -162,7 +158,6 @@ def build_total_summary(rows: list[dict], month_label: str | None = None) -> str
         )
 
     by_category: dict[str, float] = {}
-    by_income_source: dict[str, float] = {}
     total_expense = 0.0
     total_income = 0.0
 
@@ -172,8 +167,6 @@ def build_total_summary(rows: list[dict], month_label: str | None = None) -> str
         except (ValueError, TypeError):
             continue
         if "income" in str(r.get("entry_type", "")).lower():
-            source = _income_source_label(r)
-            by_income_source[source] = by_income_source.get(source, 0.0) + amt
             total_income += amt
         else:
             cat = str(r.get("category", "Other"))
@@ -181,16 +174,27 @@ def build_total_summary(rows: list[dict], month_label: str | None = None) -> str
             total_expense += amt
 
     net = total_income - total_expense
+    if net >= 0:
+        net_str = f"+GHS {net:,.2f} \u2705"
+    else:
+        net_str = f"-GHS {abs(net):,.2f} \u26a0"
+
+    # Find top expense category
+    if by_category:
+        top_cat, top_amt = max(by_category.items(), key=lambda x: x[1])
+        top_pct = (top_amt / total_expense * 100) if total_expense else 0
+        top_expense_str = f"{top_cat} ({top_pct:.0f}%)"
+    else:
+        top_expense_str = "None (0%)"
+
     lines = [
-        f"\U0001f4ca *{BRAND_NAME} \u2014 {month_name}*",
+        f"\U0001f4ca *{month_name}*",
+        f"Net: {net_str}",
         "",
-        f"*Expenses* (GHS {total_expense:,.2f})",
-        *_expense_lines(by_category, total_expense),
+        f"\U0001f4b8 Spent: GHS {total_expense:,.2f}",
+        f"\U0001f4b0 Earned: GHS {total_income:,.2f}",
         "",
-        f"*Income* (GHS {total_income:,.2f})",
-        *_income_lines(by_income_source, total_income),
-        "",
-        f"*Net:* GHS {net:,.2f}",
+        f"Top expense: {top_expense_str}",
     ]
     return "\n".join(lines)
 
@@ -203,6 +207,49 @@ def build_monthly_recap(rows: list[dict], month_label: str) -> str:
         f"{summary}\n\n"
         "Keep KountN this month! Type *TOTAL* anytime for a live view."
     )
+
+
+def build_weekly_recap(rows: list[dict]) -> str:
+    """Format a weekly recap showing summary metrics for the last 7 days."""
+    total_expense = 0.0
+    total_income = 0.0
+    by_category: dict[str, float] = {}
+
+    for r in rows:
+        try:
+            amt = float(r.get("amount", 0))
+        except (ValueError, TypeError):
+            continue
+        if "income" in str(r.get("entry_type", "")).lower():
+            total_income += amt
+        else:
+            cat = str(r.get("category", "Other"))
+            by_category[cat] = by_category.get(cat, 0.0) + amt
+            total_expense += amt
+
+    net = total_income - total_expense
+    if net >= 0:
+        net_str = f"+GHS {net:,.2f} \u2705"
+    else:
+        net_str = f"-GHS {abs(net):,.2f} \u26a0"
+
+    if by_category:
+        top_cat, top_amt = max(by_category.items(), key=lambda x: x[1])
+        top_pct = (top_amt / total_expense * 100) if total_expense else 0
+        top_expense_str = f"{top_cat} ({top_pct:.0f}%)"
+    else:
+        top_expense_str = "None (0%)"
+
+    return (
+        f"\U0001f4ec *Your Weekly Recap from {BRAND_NAME}*\n"
+        f"Last 7 days performance:\n\n"
+        f"Net: {net_str}\n"
+        f"\U0001f4b8 Spent: GHS {total_expense:,.2f}\n"
+        f"\U0001f4b0 Earned: GHS {total_income:,.2f}\n\n"
+        f"Top expense: {top_expense_str}\n\n"
+        f"Keep KountN! Type *TOTAL* anytime for your monthly summary."
+    )
+
 
 
 def build_last_n(rows: list[dict], n: int = 5) -> str:
@@ -269,17 +316,36 @@ def build_undo_confirmation(deleted: list[dict] | dict) -> str:
         )
 
 
-def build_confirmation(entry) -> str:
+def build_confirmation(
+    entry,
+    spent_this_month: float = 0.0,
+    show_hint: bool = True,
+    budget_alert: str = "",
+    savings_progress: str = ""
+) -> str:
     emoji = "\U0001f4b0" if entry.entry_type == "Income" else "\U0001f4b8"
     merchant_line = f"\n\U0001f3ea {entry.merchant}" if entry.merchant else ""
-    return (
-        f"\u2705 *{BRAND_NAME}!*\n"
-        f"{emoji} {entry.entry_type}: {entry.currency} {entry.amount:,.2f}\n"
-        f"\U0001f4c1 {entry.category}"
+    client_tag_line = f" \u00b7 Tag: {entry.client_tag}" if getattr(entry, "client_tag", None) else ""
+    classification_line = f" ({entry.classification})" if getattr(entry, "classification", None) else ""
+
+    msg = (
+        f"\u2705 *Logged \u00b7 GHS {spent_this_month:,.2f} spent this month*\n"
+        f"{emoji} {entry.entry_type}: {entry.currency} {entry.amount:,.2f}{classification_line}\n"
+        f"\U0001f4c1 {entry.category}{client_tag_line}"
         f"{merchant_line}\n"
-        f"\U0001f4dd {entry.description}\n\n"
-        "Type *TOTAL* to see your month so far."
+        f"\U0001f4dd {entry.description}"
     )
+
+    if budget_alert:
+        msg += budget_alert
+    if savings_progress:
+        msg += savings_progress
+
+    if show_hint:
+        msg += "\n\nType *TOTAL* to see your month so far."
+
+    return msg
+
 
 
 def build_trial_reminder_message(days_left: int, trial_ends_at) -> str:

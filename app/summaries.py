@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from structlog import get_logger
 
 from app.database import get_user_expenses, get_users_for_monthly_summary
-from app.messaging import build_monthly_recap, send_wa_text
+from app.messaging import build_monthly_recap, send_wa_text, build_weekly_recap
 from app.security import decrypt_stored_phone, safe_log_phone
 
 logger = get_logger()
@@ -54,3 +54,52 @@ async def send_monthly_recaps() -> tuple[int, int, str]:
             )
 
     return sent, len(users), month_year
+
+
+async def send_weekly_recaps() -> tuple[int, int]:
+    """
+    Send last 7 days' recap to Pro and Premium users via WhatsApp.
+    Returns (sent_count, eligible_count).
+    """
+    users = await get_users_for_monthly_summary()
+    sent = 0
+    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+
+    for user in users:
+        phone = decrypt_stored_phone(user.get("notify_phone_enc") or "")
+        if not phone:
+            logger.info(
+                "Skipping weekly recap — no notify phone on file",
+                user_id=str(user.get("id", ""))[:8],
+            )
+            continue
+
+        try:
+            all_rows = await get_user_expenses(phone)
+            # Filter for last 7 days
+            rows = []
+            for r in all_rows:
+                try:
+                    dt = datetime.fromisoformat(r["logged_at"].replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if dt >= seven_days_ago:
+                        rows.append(r)
+                except Exception:
+                    pass
+
+            if not rows:
+                continue
+
+            await send_wa_text(phone, build_weekly_recap(rows))
+            sent += 1
+            logger.info("Weekly recap sent", phone=safe_log_phone(phone))
+        except Exception as exc:
+            logger.error(
+                "Weekly recap failed",
+                phone=safe_log_phone(phone),
+                error=str(exc),
+            )
+
+    return sent, len(users)
+

@@ -340,6 +340,8 @@ async def save_expense(
         "entry_type":   entry.entry_type,
         "input_method": input_method,
         "timestamp":    entry_dt.strftime("%Y-%m-%d %H:%M UTC"),
+        "client_tag":   getattr(entry, "client_tag", None),
+        "classification": getattr(entry, "classification", "personal"),
     }
     if batch_id:
         payload["batch_id"] = batch_id
@@ -409,3 +411,30 @@ async def get_user_expenses(
         except (InvalidToken, Exception) as exc:
             logger.warning("Decrypt failed", row_id=row["id"], error=str(exc))
     return results
+
+
+async def get_category_budget(user_id: str, category: str, month_year: str) -> Optional[dict]:
+    """Retrieve budget limit for a category and month."""
+    sb = get_supabase()
+    result = await asyncio.to_thread(
+        lambda: sb.table("expense_budgets")
+            .select("id, limit_amount")
+            .eq("user_id", user_id)
+            .eq("category", category)
+            .eq("month_year", month_year)
+            .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+async def get_savings_goals(user_id: str) -> list[dict]:
+    """Retrieve active savings goals for a user."""
+    sb = get_supabase()
+    result = await asyncio.to_thread(
+        lambda: sb.table("savings_goals")
+            .select("id, name, target_amount, current_amount, target_date")
+            .eq("user_id", user_id)
+            .execute()
+    )
+    return result.data or []
+
