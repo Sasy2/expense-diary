@@ -71,11 +71,11 @@ _CMD_PATTERNS = {
         re.IGNORECASE
     ),
     "TOTAL": re.compile(
-        r"^\s*(?:what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)?(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:for\s+)?(?:this\s+)?month)?\s*(?:please|thanks)?\s*$",
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:for\s+)?(?:this\s+)?month)?\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
     "REPORT": re.compile(
-        r"^\s*(?:show\s+|get\s+|download\s+|export\s+|send\s+)?(?:my\s+|the\s+)*(?:report|csv|excel|sheet)(?:\s+file|\s+please|\s+thanks)?\s*$",
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|download\s+|export\s+|send\s+|view\s+)*(?:my\s+|the\s+)*(?:report|csv|excel|sheet)(?:\s+(?:file|for\s+this\s+month|this\s+month))*\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
     "UPGRADE": re.compile(
