@@ -438,3 +438,25 @@ async def get_savings_goals(user_id: str) -> list[dict]:
     )
     return result.data or []
 
+
+async def register_message_id(message_id: str) -> bool:
+    """
+    Attempt to insert the message_id into processed_messages.
+    Returns True if it was successfully inserted (new message),
+    False if it already existed (duplicate).
+    """
+    if not message_id:
+        return True
+    sb = get_supabase()
+    try:
+        await asyncio.to_thread(
+            lambda: sb.table("processed_messages")
+                .insert({"message_id": message_id})
+                .execute()
+        )
+        return True
+    except Exception as exc:
+        logger.info("Duplicate WhatsApp message detected and ignored", message_id=message_id)
+        return False
+
+

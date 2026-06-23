@@ -12,7 +12,7 @@ TIER_PRO = "pro"
 TIER_PREMIUM = "premium"
 
 TIER_LIMITS: dict[str, int] = {
-    TIER_FREE: 5,
+    TIER_FREE: 15,
     TIER_PRO: 75,
     TIER_PREMIUM: 300,
 }

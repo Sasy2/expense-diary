@@ -8,7 +8,7 @@ process_expense_message() → Parse → check limits → encrypt → save → co
 
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from structlog import get_logger
@@ -70,12 +70,21 @@ _CMD_PATTERNS = {
         r"|^\s*how\s+(?:to\s+use|does\s+this\s+work|do\s+i\s+use|it\s+works|to|do)(?:\s+\w+)*\s*$",
         re.IGNORECASE
     ),
+    "TOTAL_TODAY": re.compile(
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|what\s+about\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+)*(?:today(?:\s+only)?(?:\s+total|\s+totals|\s+summary|\s+recap|\s+breakdown)?|total(?:\s+for)?\s+today|spent\s+today|earned\s+today|today\s+spend|today\s+spending|today\s+earnings|today(?:\s+this\s+week\s+only)?)\s*(?:please|thanks)?\s*$",
+        re.IGNORECASE
+    ),
+    "TOTAL_WEEK": re.compile(
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|what\s+about\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+)*(?:this\s+week(?:\s+only)?(?:\s+total|\s+totals|\s+summary|\s+recap|\s+breakdown)?|weekly(?:\s+total|\s+totals|\s+summary|\s+recap|\s+breakdown)?|total(?:\s+for)?\s+this\s+week|spent\s+this\s+week|earned\s+this\s+week|week\s+total|weekly\s+summary|total(?:\s+this\s+week\s+only)?)\s*(?:please|thanks)?\s*$",
+        re.IGNORECASE
+    ),
     "TOTAL": re.compile(
-        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:total|totals|summary|summaries|recap|breakdown|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks)?\s*$",
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|what\s+about\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:total|totals|summary|summaries|recap|breakdown|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
     "REPORT": re.compile(
-        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|download\s+|export\s+|send\s+|view\s+)*(?:my\s+|the\s+)*(?:report|csv|excel|sheet)(?:\s+(?:report|csv|excel|sheet|file|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks)?\s*$",
+        r"^\s*(?:can\s+i\s+)?(?:see|get|download|export|send|view|have|generate|want|need|show)?(?:\s+(?:my|the|a|some|an))*\s*(?:report|csv|excel|sheet|data|expenses|transactions)(?:\s+(?:report|csv|excel|sheet|file|export|download|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks|thank\s+you)?\s*$"
+        r"|^\s*(?:report|csv|excel|sheet)(?:\s+(?:please|thanks|thank\s+you))?\s*$",
         re.IGNORECASE
     ),
     "UPGRADE": re.compile(
@@ -128,17 +137,22 @@ def detect_command(text: str) -> Optional[str]:
     # 3. Fallback: space-stripped exact match
     normalised = re.sub(r"\s+", "", stripped.upper())
     fallback_map = {
-        "HELP":     "HELP",
-        "TOTAL":    "TOTAL",
-        "REPORT":   "REPORT",
-        "LAST5":    "LAST:5",
-        "UPGRADE":  "UPGRADE",
-        "PRO":      "PRO",
-        "PREMIUM":  "PREMIUM",
-        "UNDO":     "UNDO",
-        "DELETE":   "UNDO",
-        "EXPLAIN":  "EXPLAIN",
-        "INSIGHTS": "EXPLAIN",
+        "HELP":       "HELP",
+        "TOTAL":      "TOTAL",
+        "TOTALTODAY": "TOTAL_TODAY",
+        "TODAY":      "TOTAL_TODAY",
+        "TOTALWEEK":  "TOTAL_WEEK",
+        "WEEK":       "TOTAL_WEEK",
+        "WEEKLY":     "TOTAL_WEEK",
+        "REPORT":     "REPORT",
+        "LAST5":      "LAST:5",
+        "UPGRADE":    "UPGRADE",
+        "PRO":        "PRO",
+        "PREMIUM":    "PREMIUM",
+        "UNDO":       "UNDO",
+        "DELETE":     "UNDO",
+        "EXPLAIN":    "EXPLAIN",
+        "INSIGHTS":   "EXPLAIN",
     }
     return fallback_map.get(normalised)
 
@@ -277,6 +291,40 @@ async def handle_command(phone: str, command: str) -> None:
             return
 
         await _send_upgrade_options(phone, tier)
+        return
+
+    if command == "TOTAL_TODAY":
+        rows = await get_user_expenses(phone)
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_rows = []
+        for r in rows:
+            try:
+                logged_at = datetime.fromisoformat(r["logged_at"].replace("Z", "+00:00"))
+                if logged_at.tzinfo is None:
+                    logged_at = logged_at.replace(tzinfo=timezone.utc)
+                if logged_at >= today_start:
+                    today_rows.append(r)
+            except Exception:
+                pass
+        await send_wa_text(phone, build_total_summary(today_rows, month_label="Today"))
+        return
+
+    if command == "TOTAL_WEEK":
+        rows = await get_user_expenses(phone)
+        now = datetime.now(timezone.utc)
+        seven_days_ago = now - timedelta(days=7)
+        week_rows = []
+        for r in rows:
+            try:
+                logged_at = datetime.fromisoformat(r["logged_at"].replace("Z", "+00:00"))
+                if logged_at.tzinfo is None:
+                    logged_at = logged_at.replace(tzinfo=timezone.utc)
+                if logged_at >= seven_days_ago:
+                    week_rows.append(r)
+            except Exception:
+                pass
+        await send_wa_text(phone, build_total_summary(week_rows, month_label="This Week"))
         return
 
     if command == "TOTAL":
@@ -429,10 +477,10 @@ async def process_expense_message(
             await _send_limit_reached(phone, tier)
             break
 
-        # Zero amount validation check: must contain "0", "zero", or "free" if amount is 0
-        if entry.amount < 0 or (entry.amount == 0 and not re.search(r"\b0\b|\bzero\b|\bfree\b", text, re.IGNORECASE)):
-            logger.info("Rejected zero-amount message", phone=phone[-4:] if len(phone) >= 4 else "****")
-            await send_wa_text(phone, build_not_an_expense_hint())
+        # Zero amount validation check
+        if entry.amount == 0:
+            logger.info("Rejected zero-amount entry", phone=phone[-4:] if len(phone) >= 4 else "****")
+            await send_wa_text(phone, "Looks like that was free — nothing to log! 😊")
             continue
 
         await save_expense(phone, user_id, entry, input_method, batch_id=batch_id, offset_seconds=i)

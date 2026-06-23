@@ -63,7 +63,15 @@ CREATE TABLE IF NOT EXISTS savings_goals (
     created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Processed messages for webhook deduplication
+CREATE TABLE IF NOT EXISTS processed_messages (
+    message_id TEXT PRIMARY KEY,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Enable RLS for the new tables
-ALTER TABLE expense_budgets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE savings_goals   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expense_budgets    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE savings_goals      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE processed_messages ENABLE ROW LEVEL SECURITY;
+
 

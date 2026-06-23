@@ -144,20 +144,72 @@ async def generate_monthly_insights(rows: list[dict], month_name: str) -> str:
         
     tx_context = "\n".join(tx_list)
     
+    # Programmatically calculate exact summary metrics
+    total_expense = 0.0
+    total_income = 0.0
+    by_category: dict[str, float] = {}
+
+    for r in rows:
+        try:
+            amt = float(r.get("amount", 0.0))
+        except (ValueError, TypeError):
+            continue
+        if r.get("entry_type") == "Income":
+            total_income += amt
+        else:
+            total_expense += amt
+            cat = r.get("category", "Other")
+            by_category[cat] = by_category.get(cat, 0.0) + amt
+
+    top_cat = "None"
+    top_amt = 0.0
+    if by_category:
+        top_cat, top_amt = max(by_category.items(), key=lambda x: x[1])
+
+    # Analyze client concentration risk
+    client_counts = {}
+    business_income = 0.0
+    for r in rows:
+        if r.get("classification") == "business" and r.get("entry_type") == "Income":
+            try:
+                amt = float(r.get("amount", 0.0))
+                business_income += amt
+            except (ValueError, TypeError):
+                continue
+            tag = r.get("client_tag")
+            if tag:
+                client_counts[tag] = client_counts.get(tag, 0.0) + amt
+
+    single_client_warning = ""
+    if client_counts and business_income > 0:
+        top_client, top_client_amt = max(client_counts.items(), key=lambda x: x[1])
+        pct = (top_client_amt / business_income) * 100
+        if pct >= 70:
+            single_client_warning = f"High dependency on client '{top_client}': GHS {top_client_amt:,.2f} ({pct:.0f}% of business income)."
+    
     prompt = dedent(f"""\
         You are KountN, a helpful, friendly financial coach for Ghanaian solopreneurs.
         Analyze the following list of transactions for the month of {month_name}:
 
         {tx_context}
 
-        Provide a brief, warm, conversational, and plain-language summary of their month.
-        Highlight:
-        - Total income vs total expense.
-        - The category they spent the most on.
-        - Any business vs personal insights (e.g. balance, high business expenses).
-        - One actionable tip to save money or optimize their budget.
+        Here are the programmatically calculated EXACT metrics for the month:
+        - Total Income: GHS {total_income:,.2f}
+        - Total Expenses: GHS {total_expense:,.2f}
+        - Net Balance: GHS {(total_income - total_expense):,.2f}
+        - Top Expense Category: {top_cat} (GHS {top_amt:,.2f})
+        {"- Client Concentration Risk: " + single_client_warning if single_client_warning else ""}
 
-        Keep it concise, friendly, and under 150 words. Do not use complex jargon. Use bullet points or emojis for readability.
+        You MUST use the EXACT calculated metrics above. Do not compute, estimate, or state different totals.
+
+        Guidelines for tone and structure:
+        - Keep the recap warm, conversational, and tailored to Ghanaian solopreneurs.
+        - Highlight the programmatic total income, total expense, and net balance using emojis.
+        - Mention the top category and what percentage of total expenses it represents.
+        - Highlight business vs personal insights (e.g. balance, high business expenses).
+        - If client concentration risk is provided (e.g. dependency on client Kwame), mention that diversifying is key.
+        - Avoid generic, boilerplate "financial app" platitudes like "you're doing well, just a little tweaking". Instead, offer specific, actionable solopreneur advice (e.g. meal-prepping for food savings, tracking micro-transport costs, or client risk).
+        - Keep it under 150 words. Use bullet points or emojis for readability.
     """)
     
     response = await asyncio.wait_for(

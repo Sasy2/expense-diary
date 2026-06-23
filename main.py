@@ -144,6 +144,14 @@ async def handle_whatsapp_event(request: Request):
 
 async def _process_single_message(msg: dict) -> None:
     """Handle one inbound WhatsApp message object."""
+    msg_id = msg.get("id")
+    if msg_id:
+        from app.database import register_message_id
+        is_new = await register_message_id(msg_id)
+        if not is_new:
+            logger.info("Ignoring duplicate WhatsApp message", message_id=msg_id)
+            return
+
     from_phone = msg.get("from", "")
     msg_type   = msg.get("type", "text")
 
@@ -372,11 +380,12 @@ async def log_expense_manually(req: ManualExpenseRequest) -> ManualExpenseRespon
     if not entries:
         raise HTTPException(status_code=422, detail="No transactions found in message")
 
+    for entry in entries:
+        if entry.amount == 0:
+            raise HTTPException(status_code=400, detail="Looks like that was free — nothing to log! 😊")
+
     batch_id = str(uuid.uuid4())
     for i, entry in enumerate(entries):
-        # Zero amount validation check
-        if entry.amount < 0 or (entry.amount == 0 and not re.search(r"\b0\b|\bzero\b|\bfree\b", req.message, re.IGNORECASE)):
-            continue
         await save_expense(phone, user_id, entry, "manual", batch_id=batch_id, offset_seconds=i)
 
     first = entries[0]
