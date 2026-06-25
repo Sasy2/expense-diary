@@ -86,42 +86,84 @@ def _income_lines(by_source: dict[str, float], total: float) -> list[str]:
 
 def build_greeting_reply() -> str:
     return (
-        f"Hey! \U0001f44b *{BRAND_NAME}* — Keep KountN your expenses.\n\n"
-        "Send any transaction in plain language, e.g.:\n"
-        "  \u2022 '45 GHS lunch at Papaye'\n"
-        "  \u2022 'Uber 35 GHS'\n\n"
-        "Type *HELP* for all commands."
+        "Hey, welcome back! 👋\n\n"
+        "Ready to log something? Just tell me naturally — no special format needed:\n"
+        "  • '25 GHS trotro to work'\n"
+        "  • 'Bought data bundle 50 cedis'\n"
+        "  • 'Client paid me 1500 GHS'\n\n"
+        "Or type *TOTAL* to see how your month is going 📊"
     )
 
 
-def build_not_an_expense_hint() -> str:
-    return (
-        "Hmm, I couldn't find an amount — did you mean to log something? Try '45 GHS lunch' 😊"
-    )
+def build_small_talk_reply() -> str:
+    import random
+    responses = [
+        (
+            "Doing great — especially when people like you take control of their money! 💪\n\n"
+            "What did you spend or earn today? Just tell me and I'll log it."
+        ),
+        (
+            "I'm here and ready to help you stay on top of your finances! 📊\n\n"
+            "Every cedi you track is a step toward understanding your money. "
+            "What would you like to log?"
+        ),
+        (
+            "All good on my end! The real question is — how are *your* finances doing? 😄\n\n"
+            "Log something today and let's find out. Just type it naturally, like:\n"
+            "  • '45 GHS lunch'\n"
+            "  • 'Received 2000 GHS'"
+        ),
+    ]
+    return random.choice(responses)
+
+
+def build_farewell_reply() -> str:
+    import random
+    responses = [
+        "Take care! 👋 Come back and log your next expense — every cedi counts. 💚",
+        "See you! The people who track their money are the ones who grow it. 📈",
+        "Bye for now! 👋 Your money diary is here whenever you need it.",
+    ]
+    return random.choice(responses)
 
 
 def build_welcome(trial_ends_at: str) -> str:
     end_date = _format_trial_end(trial_ends_at)
     return (
-        f"Welcome to *{BRAND_NAME}*! \U0001f9fe\n\n"
-        f"\U0001f38a You're on a *free Pro trial* for {TRIAL_DAYS} days "
-        f"(until {end_date}).\n"
-        f"  \u2714 {get_entry_limit(TIER_PRO)} transactions/month\n"
-        "  \u2714 Monthly summaries (TOTAL)\n"
-        "  \u2714 LAST 5, HELP & more\n\n"
-        "Keep KountN your expenses — just type naturally:\n"
-        "  \u2022 '45 GHS lunch at Papaye'\n"
-        "  \u2022 'Uber 35 GHS'\n"
-        "  \u2022 'Client paid 2000 GHS'\n\n"
-        "\U0001f4f8 *Photos:* Send with a caption describing the amount.\n\n"
-        "*Commands:*\n"
-        "  TOTAL \u2014 this month's breakdown\n"
-        "  LAST 5 / LAST 10 \u2014 recent entries\n"
-        "  UNDO \u2014 remove last transaction\n"
-        "  EXPLAIN \u2014 get AI financial insights\n"
-        "  HELP \u2014 full instructions\n"
-        "  UPGRADE \u2014 see paid plans after your trial\n\n"
-        "After your trial, you'll move to Free unless you upgrade."
+        f"Hey! 👋 Welcome to *{BRAND_NAME}* — your personal money diary, right here in WhatsApp.\n\n"
+        "Most people work hard but never really know where their money goes. "
+        f"*{BRAND_NAME}* changes that — just text your expenses and income like you're "
+        "telling a friend, and we'll handle the tracking.\n\n"
+        f"🎊 You're on a *free Pro trial* for {TRIAL_DAYS} days (until {end_date}):\n"
+        f"  ✔ {get_entry_limit(TIER_PRO)} transactions/month\n"
+        "  ✔ Monthly summaries & weekly recaps\n"
+        "  ✔ AI financial insights (EXPLAIN)\n"
+        "  ✔ UNDO mistakes instantly\n\n"
+        "*To log anything, just type it naturally:*\n"
+        "  • '45 GHS lunch at Papaye'\n"
+        "  • 'Uber 35 cedis'\n"
+        "  • 'Client Kwame paid me 2000 GHS'\n"
+        "  • '50 cedis data bundle'\n\n"
+        "*Commands you can use anytime:*\n"
+        "  *TOTAL* — this month's breakdown\n"
+        "  *TODAY* — what you've spent today\n"
+        "  *LAST 5* — your last 5 transactions\n"
+        "  *EXPLAIN* — AI insights on your spending\n"
+        "  *UNDO* — remove your last entry\n"
+        "  *HELP* — full guide\n\n"
+        "📸 You can also send a *photo of a receipt* with a caption describing the amount.\n\n"
+        "_Your data is private and encrypted — only you can read it._\n\n"
+        "What did you spend or earn today? 💚"
+    )
+
+
+def build_not_an_expense_hint() -> str:
+    return (
+        "Hmm, I couldn't quite catch that 🤔\n\n"
+        "To log an expense or income, just include an amount. For example:\n"
+        "  • '45 GHS lunch'\n"
+        "  • 'Client paid me 500 cedis'\n\n"
+        "Type *HELP* if you need the full guide."
     )
 
 

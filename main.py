@@ -53,8 +53,8 @@ from app.database import (
 from app.dashboard_html import DASHBOARD_HTML
 from app.summaries import send_monthly_recaps, send_weekly_recaps
 from app.trial import handle_trial_lifecycle, run_trial_expiry_cron
-from app.handlers import detect_command, detect_greeting, handle_command, process_expense_message
-from app.messaging import build_greeting_reply, build_welcome, send_wa_text
+from app.handlers import detect_command, detect_greeting, detect_farewell, detect_small_talk, handle_command, process_expense_message
+from app.messaging import build_greeting_reply, build_farewell_reply, build_small_talk_reply, build_welcome, send_wa_text
 from app.models import (
     DbStatusResponse,
     ManualExpenseRequest,
@@ -225,6 +225,16 @@ async def _route_text(phone: str, text: str, input_method: str = "text") -> None
     if detect_greeting(text):
         logger.info("Greeting received", phone=safe_log_phone(phone))
         await send_wa_text(phone, build_greeting_reply())
+        return
+
+    if detect_farewell(text):
+        logger.info("Farewell received", phone=safe_log_phone(phone))
+        await send_wa_text(phone, build_farewell_reply())
+        return
+
+    if detect_small_talk(text):
+        logger.info("Small talk received", phone=safe_log_phone(phone))
+        await send_wa_text(phone, build_small_talk_reply())
         return
 
     await process_expense_message(phone, user_id, text, input_method)

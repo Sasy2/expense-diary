@@ -23,6 +23,7 @@ from app.database import (
 )
 from app.messaging import (
     build_confirmation,
+    build_farewell_reply,
     build_greeting_reply,
     build_help,
     build_last_n,
@@ -31,6 +32,7 @@ from app.messaging import (
     build_not_an_expense_hint,
     build_premium_upgrade_message,
     build_report_paywall,
+    build_small_talk_reply,
     build_total_summary,
     build_upgrade_menu,
     build_upgrade_nudge,
@@ -164,12 +166,42 @@ _GREETINGS = frozenset({
     "whats up", "what's up", "wassup", "sup", "yo", "hiya",
     "hi there", "hey there", "hello there",
     "thanks", "thank you", "thankyou", "ok", "okay", "cheers",
+    "akwaaba", "medaase", "ete sen", "ɛte sɛn",
 })
+
+_FAREWELLS = frozenset({
+    "bye", "goodbye", "good bye", "bye bye", "later", "see you", "see ya",
+    "take care", "cya", "ttyl", "have a good day", "have a great day",
+    "gotta go", "gotta run", "talk later", "until next time", "night",
+    "good night", "goodnight", "nite",
+})
+
+_SMALL_TALK = re.compile(
+    r"^\s*(?:"
+    r"how are you"
+    r"|how are you doing"
+    r"|how's it going"
+    r"|how are things"
+    r"|how do you do"
+    r"|you good"
+    r"|are you there"
+    r"|you okay"
+    r"|what are you"
+    r"|who are you"
+    r"|what can you do"
+    r"|what is this"
+    r"|whats this"
+    r"|what's this"
+    r"|nice to meet you"
+    r"|pleased to meet you"
+    r")\s*[?!.]*\s*$",
+    re.IGNORECASE,
+)
 
 
 def detect_greeting(text: str) -> bool:
     """
-    Return True for small-talk / greetings that are not expenses.
+    Return True for greetings that are not expenses.
     Messages containing digits are never treated as greetings.
     """
     if re.search(r"\d", text):
@@ -184,6 +216,22 @@ def detect_greeting(text: str) -> bool:
         if normalised.startswith(stem) and len(normalised) <= len(stem) + 3:
             return True
     return False
+
+
+def detect_farewell(text: str) -> bool:
+    """Return True if the message is a farewell/goodbye."""
+    if re.search(r"\d", text):
+        return False
+    normalised = re.sub(r"[^\w\s']", "", text.strip().lower())
+    normalised = re.sub(r"\s+", " ", normalised).strip()
+    return normalised in _FAREWELLS
+
+
+def detect_small_talk(text: str) -> bool:
+    """Return True if the message is conversational small talk."""
+    if re.search(r"\d", text):
+        return False
+    return bool(_SMALL_TALK.match(text.strip()))
 
 
 async def _send_upgrade_options(phone: str, tier: str) -> None:
