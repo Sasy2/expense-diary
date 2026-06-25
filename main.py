@@ -19,6 +19,22 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+# Load local .env file if it exists (for local development)
+if os.path.exists(".env"):
+    with open(".env", "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip()
+                # Handle potential inline comments
+                if " #" in val:
+                    val = val.split(" #", 1)[0].strip()
+                os.environ.setdefault(key, val.strip("'\""))
+
 import structlog
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -32,7 +48,9 @@ from app.database import (
     reset_all_entry_counts,
     save_expense,
     get_user_expenses,
+    get_dashboard_stats,
 )
+from app.dashboard_html import DASHBOARD_HTML
 from app.summaries import send_monthly_recaps, send_weekly_recaps
 from app.trial import handle_trial_lifecycle, run_trial_expiry_cron
 from app.handlers import detect_command, detect_greeting, handle_command, process_expense_message
@@ -418,6 +436,28 @@ async def db_status() -> DbStatusResponse:
         )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Supabase error: {exc}")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard():
+    """Serves the developer dashboard HTML page."""
+    return HTMLResponse(DASHBOARD_HTML)
+
+
+@app.get("/api/dashboard/stats")
+async def api_dashboard_stats(secret: str | None = None):
+    """
+    Returns aggregated decrypted dashboard statistics if authorized.
+    """
+    if not secret or secret != os.environ.get("CRON_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Unauthorised passkey")
+    
+    try:
+        data = await get_dashboard_stats()
+        return data
+    except Exception as exc:
+        logger.error("Dashboard stats failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 if __name__ == "__main__":

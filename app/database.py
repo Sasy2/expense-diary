@@ -17,6 +17,7 @@ from structlog import get_logger
 
 from app.security import (
     decrypt_for_user,
+    decrypt_stored_phone,
     encrypt_for_user,
     encrypt_stored_phone,
     get_phone_lookup_id,
@@ -458,5 +459,135 @@ async def register_message_id(message_id: str) -> bool:
     except Exception as exc:
         logger.info("Duplicate WhatsApp message detected and ignored", message_id=message_id)
         return False
+
+
+async def get_dashboard_stats() -> dict:
+    """
+    Fetch all users and expenses from Supabase.
+    Decrypt phone numbers and expense payloads in memory.
+    Return aggregated statistics for the developer dashboard.
+    """
+    sb = get_supabase()
+
+    # 1. Fetch all users
+    users_result = await asyncio.to_thread(
+        lambda: sb.table("expense_users")
+            .select("id, tier, entry_count, trial_ends_at, is_paid, created_at, notify_phone_enc")
+            .order("created_at", desc=True)
+            .execute()
+    )
+    users_data = users_result.data or []
+
+    # 2. Map user_id -> decrypted phone & user details
+    user_map = {}
+    users_list = []
+    tiers_count = {"free": 0, "pro": 0, "premium": 0}
+    active_users = set()
+
+    for u in users_data:
+        u_id = u["id"]
+        phone_enc = u.get("notify_phone_enc")
+        phone = decrypt_stored_phone(phone_enc) if phone_enc else None
+        
+        tier = u.get("tier") or "free"
+        tiers_count[tier] = tiers_count.get(tier, 0) + 1
+        
+        user_info = {
+            "id": u_id,
+            "phone": phone or "Unknown",
+            "phone_masked": f"+{phone[:-4]}****" if phone and len(phone) > 4 else "Unknown",
+            "tier": tier,
+            "entry_count": u.get("entry_count", 0),
+            "trial_ends_at": u.get("trial_ends_at"),
+            "is_paid": u.get("is_paid", False),
+            "created_at": u.get("created_at"),
+            "transactions_count": 0,
+            "last_active": "Never",
+            "transactions": []
+        }
+        user_map[u_id] = {
+            "phone": phone,
+            "info": user_info
+        }
+        users_list.append(user_info)
+
+    # 3. Fetch all expenses
+    expenses_result = await asyncio.to_thread(
+        lambda: sb.table("expenses")
+            .select("id, user_id, encrypted_payload, logged_at, month_year")
+            .order("logged_at", desc=True)
+            .execute()
+    )
+    expenses_data = expenses_result.data or []
+
+    # 4. Decrypt and aggregate expenses
+    total_tx = 0
+    income_total = 0.0
+    expense_total = 0.0
+    category_counts = {}
+    input_method_counts = {"text": 0, "image": 0, "voice": 0, "manual": 0}
+    daily_stats = {}
+
+    for exp in expenses_data:
+        u_id = exp["user_id"]
+        if u_id not in user_map:
+            continue
+            
+        phone = user_map[u_id]["phone"]
+        if not phone:
+            continue
+
+        try:
+            payload = decrypt_for_user(exp["encrypted_payload"], phone)
+            payload["id"] = exp["id"]
+            payload["logged_at"] = exp["logged_at"]
+            
+            # Update user info
+            user_info = user_map[u_id]["info"]
+            user_info["transactions_count"] += 1
+            if user_info["last_active"] == "Never":
+                user_info["last_active"] = exp["logged_at"]
+            user_info["transactions"].append(payload)
+            active_users.add(u_id)
+
+            # Global aggregation
+            total_tx += 1
+            
+            # Daily trends
+            try:
+                day = exp["logged_at"].split("T")[0]
+                daily_stats[day] = daily_stats.get(day, 0) + 1
+            except Exception:
+                pass
+
+            # Category count
+            cat = payload.get("category") or "Other"
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            # Input method
+            method = payload.get("input_method") or "text"
+            input_method_counts[method] = input_method_counts.get(method, 0) + 1
+
+            # Income / Expense sums
+            amt = float(payload.get("amount") or 0.0)
+            if payload.get("entry_type") == "Income":
+                income_total += amt
+            else:
+                expense_total += amt
+        except Exception as exc:
+            logger.warning("Decryption failed for dashboard expense row", row_id=exp["id"], error=str(exc))
+
+    return {
+        "total_users": len(users_list),
+        "active_users_count": len(active_users),
+        "total_transactions": total_tx,
+        "tiers": tiers_count,
+        "categories": category_counts,
+        "input_methods": input_method_counts,
+        "income_total": round(income_total, 2),
+        "expense_total": round(expense_total, 2),
+        "daily_trends": sorted([{"date": k, "count": v} for k, v in daily_stats.items()], key=lambda x: x["date"]),
+        "users": users_list
+    }
 
 
