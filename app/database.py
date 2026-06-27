@@ -488,23 +488,27 @@ async def get_dashboard_stats() -> dict:
         u_id = u["id"]
         phone_enc = u.get("notify_phone_enc")
         phone = decrypt_stored_phone(phone_enc) if phone_enc else None
-        
+
         tier = u.get("tier") or "free"
         tiers_count[tier] = tiers_count.get(tier, 0) + 1
-        
+        entry_count = u.get("entry_count", 0)
+
         user_info = {
             "id": u_id,
-            "phone": phone or "Unknown",
-            "phone_masked": f"+{phone[:-4]}****" if phone and len(phone) > 4 else "Unknown",
+            "phone": phone or "Encrypted",
+            "phone_masked": f"+{phone[:-4]}****" if phone and len(phone) > 4 else "Encrypted ●●●●",
             "tier": tier,
-            "entry_count": u.get("entry_count", 0),
+            "entry_count": entry_count,
             "trial_ends_at": u.get("trial_ends_at"),
             "is_paid": u.get("is_paid", False),
             "created_at": u.get("created_at"),
-            "transactions_count": 0,
+            "transactions_count": entry_count,  # seed with entry_count as baseline
             "last_active": "Never",
             "transactions": []
         }
+        if entry_count > 0:
+            active_users.add(u_id)
+
         user_map[u_id] = {
             "phone": phone,
             "info": user_info
@@ -521,44 +525,42 @@ async def get_dashboard_stats() -> dict:
     expenses_data = expenses_result.data or []
 
     # 4. Decrypt and aggregate expenses
-    total_tx = 0
+    total_tx = sum(u.get("entry_count", 0) for u in users_data)  # baseline from user records
     income_total = 0.0
     expense_total = 0.0
     category_counts = {}
     input_method_counts = {"text": 0, "image": 0, "voice": 0, "manual": 0}
     daily_stats = {}
+    decrypted_tx = 0
 
     for exp in expenses_data:
         u_id = exp["user_id"]
         if u_id not in user_map:
             continue
-            
+
+        user_info = user_map[u_id]["info"]
+
+        # Update last_active without needing decryption
+        if user_info["last_active"] == "Never" and exp.get("logged_at"):
+            user_info["last_active"] = exp["logged_at"]
+
+        # Daily trends — no decryption needed
+        try:
+            day = exp["logged_at"].split("T")[0]
+            daily_stats[day] = daily_stats.get(day, 0) + 1
+        except Exception:
+            pass
+
         phone = user_map[u_id]["phone"]
         if not phone:
-            continue
+            continue  # can't decrypt payload without phone key
 
         try:
             payload = decrypt_for_user(exp["encrypted_payload"], phone)
             payload["id"] = exp["id"]
             payload["logged_at"] = exp["logged_at"]
-            
-            # Update user info
-            user_info = user_map[u_id]["info"]
-            user_info["transactions_count"] += 1
-            if user_info["last_active"] == "Never":
-                user_info["last_active"] = exp["logged_at"]
             user_info["transactions"].append(payload)
-            active_users.add(u_id)
-
-            # Global aggregation
-            total_tx += 1
-            
-            # Daily trends
-            try:
-                day = exp["logged_at"].split("T")[0]
-                daily_stats[day] = daily_stats.get(day, 0) + 1
-            except Exception:
-                pass
+            decrypted_tx += 1
 
             # Category count
             cat = payload.get("category") or "Other"
@@ -589,5 +591,3 @@ async def get_dashboard_stats() -> dict:
         "daily_trends": sorted([{"date": k, "count": v} for k, v in daily_stats.items()], key=lambda x: x["date"]),
         "users": users_list
     }
-
-
