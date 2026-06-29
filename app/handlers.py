@@ -8,7 +8,7 @@ process_expense_message() → Parse → check limits → encrypt → save → co
 
 import re
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from typing import Optional
 
 from structlog import get_logger
@@ -80,6 +80,14 @@ _CMD_PATTERNS = {
         r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|what\s+about\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+)*(?:this\s+week(?:\s+only)?(?:\s+total|\s+totals|\s+summary|\s+recap|\s+breakdown)?|weekly(?:\s+total|\s+totals|\s+summary|\s+recap|\s+breakdown)?|total(?:\s+for)?\s+this\s+week|spent\s+this\s+week|earned\s+this\s+week|week\s+total|weekly\s+summary|total(?:\s+this\s+week\s+only)?)\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
     ),
+    "TOTAL_LAST_WEEK": re.compile(
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+)*(?:last\s+week(?:'s)?(?:\s+total|\s+totals|\s+summary|\s+recap|\s+breakdown)?|total(?:\s+for)?\s+last\s+week|last\s+week(?:\s+only)?)\s*(?:please|thanks)?\s*$",
+        re.IGNORECASE
+    ),
+    "TOTAL_LAST_MONTH": re.compile(
+        r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+)*(?:last\s+month(?:'s)?(?:\s+total|\s+totals|\s+summary|\s+recap|\s+breakdown)?|total(?:\s+for)?\s+last\s+month|previous\s+month(?:'s)?(?:\s+total|\s+summary)?)\s*(?:please|thanks)?\s*$",
+        re.IGNORECASE
+    ),
     "TOTAL": re.compile(
         r"^\s*(?:can\s+i\s+see\s+|can\s+you\s+|what\s+is\s+|what's\s+|whats\s+|what\s+about\s+|show\s+|get\s+|view\s+)*(?:my\s+|the\s+|this\s+month's\s+|monthly\s+)*(?:total|totals|summary|summaries|recap|breakdown)(?:\s+(?:total|totals|summary|summaries|recap|breakdown|for\s+this\s+month|this\s+month|for|month))*\s*(?:please|thanks)?\s*$",
         re.IGNORECASE
@@ -136,27 +144,126 @@ def detect_command(text: str) -> Optional[str]:
                 return "UNDO"
             return cmd
 
-    # 3. Fallback: space-stripped exact match
+    # 3. Try to detect a date-range command: "total from X to Y" / "total Jun 1-15"
+    range_cmd = _detect_total_range(stripped)
+    if range_cmd:
+        return range_cmd
+
+    # 4. Fallback: space-stripped exact match
     normalised = re.sub(r"\s+", "", stripped.upper())
     fallback_map = {
-        "HELP":       "HELP",
-        "TOTAL":      "TOTAL",
-        "TOTALTODAY": "TOTAL_TODAY",
-        "TODAY":      "TOTAL_TODAY",
-        "TOTALWEEK":  "TOTAL_WEEK",
-        "WEEK":       "TOTAL_WEEK",
-        "WEEKLY":     "TOTAL_WEEK",
-        "REPORT":     "REPORT",
-        "LAST5":      "LAST:5",
-        "UPGRADE":    "UPGRADE",
-        "PRO":        "PRO",
-        "PREMIUM":    "PREMIUM",
-        "UNDO":       "UNDO",
-        "DELETE":     "UNDO",
-        "EXPLAIN":    "EXPLAIN",
-        "INSIGHTS":   "EXPLAIN",
+        "HELP":          "HELP",
+        "TOTAL":         "TOTAL",
+        "TOTALTODAY":    "TOTAL_TODAY",
+        "TODAY":         "TOTAL_TODAY",
+        "TOTALWEEK":     "TOTAL_WEEK",
+        "WEEK":          "TOTAL_WEEK",
+        "WEEKLY":        "TOTAL_WEEK",
+        "TOTALLASTWEEK": "TOTAL_LAST_WEEK",
+        "LASTWEEK":      "TOTAL_LAST_WEEK",
+        "TOTALLASTMONTH":"TOTAL_LAST_MONTH",
+        "LASTMONTH":     "TOTAL_LAST_MONTH",
+        "REPORT":        "REPORT",
+        "LAST5":         "LAST:5",
+        "UPGRADE":       "UPGRADE",
+        "PRO":           "PRO",
+        "PREMIUM":       "PREMIUM",
+        "UNDO":          "UNDO",
+        "DELETE":        "UNDO",
+        "EXPLAIN":       "EXPLAIN",
+        "INSIGHTS":      "EXPLAIN",
     }
     return fallback_map.get(normalised)
+
+
+# ── Date-range detection ──────────────────────────────────────────────────────
+
+_MONTH_NAMES = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+# Patterns like: "total from June 1 to June 15", "total Jun 1-15", "total 1/6 to 15/6"
+_RANGE_FROM_TO = re.compile(
+    r"""(?:total|summary|recap)\s+(?:from\s+)?
+        (?P<m1>[a-z]+)?\s*(?P<d1>\d{1,2})(?:\s*/\s*(?P<m1b>\d{1,2}))?
+        \s*(?:to|-|through|till|until)\s+
+        (?P<m2>[a-z]+)?\s*(?P<d2>\d{1,2})(?:\s*/\s*(?P<m2b>\d{1,2}))?
+        (?:\s+(?P<yr>\d{4}))?\s*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Patterns like: "total June", "total June 2025", "total last June"
+_RANGE_MONTH_ONLY = re.compile(
+    r"""(?:total|summary|recap)\s+(?:for\s+)?(?:last\s+)?(?P<month>[a-z]+)(?:\s+(?P<year>\d{4}))?\s*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _detect_total_range(text: str) -> str | None:
+    """Try to parse a date-range from the stripped text; return 'TOTAL_RANGE:start:end' or None."""
+    now = datetime.now(timezone.utc)
+    cur_year = now.year
+
+    # Try "from X to Y" style
+    m = _RANGE_FROM_TO.search(text.lower())
+    if m:
+        try:
+            year = int(m.group("yr")) if m.group("yr") else cur_year
+            # Start date
+            if m.group("m1") and m.group("m1") in _MONTH_NAMES:
+                sm = _MONTH_NAMES[m.group("m1")]
+                sd = int(m.group("d1"))
+            elif m.group("m1b"):  # numeric month like d/m
+                sm = int(m.group("m1b"))
+                sd = int(m.group("d1"))
+            else:
+                sm = now.month
+                sd = int(m.group("d1"))
+            # End date
+            if m.group("m2") and m.group("m2") in _MONTH_NAMES:
+                em = _MONTH_NAMES[m.group("m2")]
+                ed = int(m.group("d2"))
+            elif m.group("m2b"):  # numeric month
+                em = int(m.group("m2b"))
+                ed = int(m.group("d2"))
+            else:
+                em = sm
+                ed = int(m.group("d2"))
+
+            start = date(year, sm, sd).isoformat()
+            end = date(year, em, ed).isoformat()
+            return f"TOTAL_RANGE:{start}:{end}"
+        except (ValueError, TypeError):
+            pass
+
+    # Try "total <MonthName>" or "total <MonthName> <year>"
+    m2 = _RANGE_MONTH_ONLY.search(text.lower())
+    if m2:
+        month_str = m2.group("month").lower()
+        if month_str in _MONTH_NAMES:
+            month_num = _MONTH_NAMES[month_str]
+            year = int(m2.group("year")) if m2.group("year") else cur_year
+            # Build first and last day of that month
+            start = date(year, month_num, 1).isoformat()
+            if month_num == 12:
+                last_day = date(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = date(year, month_num + 1, 1) - timedelta(days=1)
+            end = last_day.isoformat()
+            return f"TOTAL_RANGE:{start}:{end}"
+
+    return None
 
 
 _GREETINGS = frozenset({
@@ -232,6 +339,17 @@ def detect_small_talk(text: str) -> bool:
     if re.search(r"\d", text):
         return False
     return bool(_SMALL_TALK.match(text.strip()))
+
+
+def _row_in_range(row: dict, start: datetime, end: datetime) -> bool:
+    """Return True if row['logged_at'] falls within [start, end)."""
+    try:
+        logged_at = datetime.fromisoformat(row["logged_at"].replace("Z", "+00:00"))
+        if logged_at.tzinfo is None:
+            logged_at = logged_at.replace(tzinfo=timezone.utc)
+        return start <= logged_at < end
+    except Exception:
+        return False
 
 
 async def _send_upgrade_options(phone: str, tier: str) -> None:
@@ -345,40 +463,78 @@ async def handle_command(phone: str, command: str) -> None:
         rows = await get_user_expenses(phone)
         now = datetime.now(timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_rows = []
-        for r in rows:
-            try:
-                logged_at = datetime.fromisoformat(r["logged_at"].replace("Z", "+00:00"))
-                if logged_at.tzinfo is None:
-                    logged_at = logged_at.replace(tzinfo=timezone.utc)
-                if logged_at >= today_start:
-                    today_rows.append(r)
-            except Exception:
-                pass
+        today_rows = [
+            r for r in rows
+            if _row_in_range(r, today_start, now)
+        ]
         await send_wa_text(phone, build_total_summary(today_rows, month_label="Today"))
         return
 
     if command == "TOTAL_WEEK":
         rows = await get_user_expenses(phone)
         now = datetime.now(timezone.utc)
-        seven_days_ago = now - timedelta(days=7)
-        week_rows = []
-        for r in rows:
-            try:
-                logged_at = datetime.fromisoformat(r["logged_at"].replace("Z", "+00:00"))
-                if logged_at.tzinfo is None:
-                    logged_at = logged_at.replace(tzinfo=timezone.utc)
-                if logged_at >= seven_days_ago:
-                    week_rows.append(r)
-            except Exception:
-                pass
+        # Mon of current week
+        week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        week_rows = [
+            r for r in rows
+            if _row_in_range(r, week_start, now)
+        ]
         await send_wa_text(phone, build_total_summary(week_rows, month_label="This Week"))
+        return
+
+    if command == "TOTAL_LAST_WEEK":
+        rows = await get_user_expenses(phone)
+        now = datetime.now(timezone.utc)
+        this_week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        last_week_start = this_week_start - timedelta(weeks=1)
+        last_week_end = this_week_start
+        lw_rows = [
+            r for r in rows
+            if _row_in_range(r, last_week_start, last_week_end)
+        ]
+        label = f"Last Week ({last_week_start.strftime('%d %b')}–{(last_week_end - timedelta(days=1)).strftime('%d %b')})"
+        await send_wa_text(phone, build_total_summary(lw_rows, month_label=label))
+        return
+
+    if command == "TOTAL_LAST_MONTH":
+        now = datetime.now(timezone.utc)
+        first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last_month_end = first_of_this_month
+        if now.month == 1:
+            first_of_last_month = now.replace(year=now.year - 1, month=12, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            first_of_last_month = now.replace(month=now.month - 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_month_year = first_of_last_month.strftime("%Y-%m")
+        prev_month_label = first_of_last_month.strftime("%B %Y")
+        rows = await get_user_expenses(phone, month_year=prev_month_year)
+        await send_wa_text(phone, build_total_summary(rows, month_label=prev_month_label))
+        return
+
+    if command.startswith("TOTAL_RANGE:"):
+        _, start_str, end_str = command.split(":", 2)
+        try:
+            start_dt = datetime.fromisoformat(start_str).replace(tzinfo=timezone.utc)
+            # end is inclusive to end of day
+            end_dt = datetime.fromisoformat(end_str).replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+            rows = await get_user_expenses(phone)
+            range_rows = [
+                r for r in rows
+                if _row_in_range(r, start_dt, end_dt)
+            ]
+            label = f"{start_dt.strftime('%d %b')}–{end_dt.strftime('%d %b %Y')}"
+            await send_wa_text(phone, build_total_summary(range_rows, month_label=label))
+        except (ValueError, TypeError) as exc:
+            logger.warning("TOTAL_RANGE parse error", error=str(exc))
+            await send_wa_text(phone, "❌ Couldn't understand that date range. Try: *total June 1 to June 15*")
         return
 
     if command == "TOTAL":
         month_year = datetime.now(timezone.utc).strftime("%Y-%m")
+        month_label = datetime.now(timezone.utc).strftime("%B %Y")
         rows = await get_user_expenses(phone, month_year=month_year)
-        await send_wa_text(phone, build_total_summary(rows))
+        await send_wa_text(phone, build_total_summary(rows, month_label=month_label))
         return
 
     if command == "EXPLAIN":

@@ -147,6 +147,9 @@ def build_welcome(trial_ends_at: str) -> str:
         "*Commands you can use anytime:*\n"
         "  *TOTAL* — this month's breakdown\n"
         "  *TODAY* — what you've spent today\n"
+        "  *WEEK* — this week's breakdown\n"
+        "  *LAST WEEK* / *LAST MONTH* — previous period\n"
+        "  *TOTAL JUNE* — any specific month\n"
         "  *LAST 5* — your last 5 transactions\n"
         "  *EXPLAIN* — AI insights on your spending\n"
         "  *UNDO* — remove your last entry\n"
@@ -175,11 +178,17 @@ def build_help() -> str:
         "  \u2022 'Grocery 120 GHS at Shoprite'\n"
         "  \u2022 'Client paid 5000 GHS'\n\n"
         "*Commands:*\n"
-        "  TOTAL \u2014 Expenses & Income breakdown\n"
-        "  LAST 5 / LAST 10 \u2014 recent transactions (any number up to 50)\n"
-        "  UNDO \u2014 remove your most recent transaction\n"
-        "  EXPLAIN \u2014 get AI financial insights and tips\n"
-        "  HELP \u2014 this message\n"
+        "  TOTAL \u2014 This month's expenses & income\n"
+        "  TODAY \u2014 What you've logged today\n"
+        "  WEEK \u2014 This week's breakdown\n"
+        "  LAST WEEK \u2014 Previous week's breakdown\n"
+        "  LAST MONTH \u2014 Previous month's breakdown\n"
+        "  TOTAL JUNE \u2014 Any specific month's totals\n"
+        "  TOTAL June 1 to June 15 \u2014 Custom date range\n"
+        "  LAST 5 / LAST 10 \u2014 Recent transactions (up to 50)\n"
+        "  UNDO \u2014 Remove your most recent transaction\n"
+        "  EXPLAIN \u2014 AI financial insights and tips\n"
+        "  HELP \u2014 This message\n"
         "  UPGRADE \u2014 Pro & Premium plans\n\n"
         "*Made a mistake?* Reply *UNDO* to delete your last entry, then re-send the correct one.\n\n"
         "*Plans:*\n"
@@ -198,10 +207,20 @@ def build_total_summary(rows: list[dict], month_label: str | None = None) -> str
     if not rows:
         return (
             f"No transactions logged yet for {month_name}.\n\n"
-            f"Send {BRAND_NAME} your first expense or income to get started!"
+            f"Send {BRAND_NAME} your first expense or income to get started!\n\n"
+            "\U0001f4a1 Just type naturally \u2014 '45 GHS lunch' or 'Client paid 2000 GHS'"
         )
 
+    # Detect currency from rows
+    currency = "GHS"
+    for r in rows:
+        c = str(r.get("currency", "")).strip()
+        if c:
+            currency = c
+            break
+
     by_category: dict[str, float] = {}
+    by_income_source: dict[str, float] = {}
     total_expense = 0.0
     total_income = 0.0
 
@@ -211,6 +230,8 @@ def build_total_summary(rows: list[dict], month_label: str | None = None) -> str
         except (ValueError, TypeError):
             continue
         if "income" in str(r.get("entry_type", "")).lower():
+            source = _income_source_label(r)
+            by_income_source[source] = by_income_source.get(source, 0.0) + amt
             total_income += amt
         else:
             cat = str(r.get("category", "Other"))
@@ -218,29 +239,41 @@ def build_total_summary(rows: list[dict], month_label: str | None = None) -> str
             total_expense += amt
 
     net = total_income - total_expense
-    if net >= 0:
-        net_str = f"+GHS {net:,.2f} \u2705"
-    else:
-        net_str = f"-GHS {abs(net):,.2f} \u26a0"
 
-    # Find top expense category
+    lines = [f"\U0001f3e6 *{BRAND_NAME} \u2014 {month_name}*", ""]
+
+    # Expenses section
     if by_category:
-        top_cat, top_amt = max(by_category.items(), key=lambda x: x[1])
-        top_pct = (top_amt / total_expense * 100) if total_expense else 0
-        top_expense_str = f"{top_cat} ({top_pct:.0f}%)"
+        lines.append(f"*Expenses* ({currency} {total_expense:,.2f})")
+        for cat, amt in sorted(by_category.items(), key=lambda x: -x[1]):
+            pct = (amt / total_expense * 100) if total_expense else 0
+            lines.append(f"  \u2022 {cat}: {currency} {amt:,.2f} ({pct:.0f}%)")
     else:
-        top_expense_str = "None (0%)"
+        lines.append(f"*Expenses* ({currency} 0.00)")
+        lines.append("  (none this month)")
 
-    lines = [
-        f"\U0001f4ca *{month_name}*",
-        f"Net: {net_str}",
-        "",
-        f"\U0001f4b8 Spent: GHS {total_expense:,.2f}",
-        f"\U0001f4b0 Earned: GHS {total_income:,.2f}",
-        "",
-        f"Top expense: {top_expense_str}",
-    ]
+    lines.append("")
+
+    # Income section
+    if by_income_source:
+        lines.append(f"*Income* ({currency} {total_income:,.2f})")
+        for source, amt in sorted(by_income_source.items(), key=lambda x: -x[1]):
+            pct = (amt / total_income * 100) if total_income else 0
+            lines.append(f"  \u2022 {source}: {currency} {amt:,.2f} ({pct:.0f}%)")
+    else:
+        lines.append(f"*Income* ({currency} 0.00)")
+        lines.append("  (none this month)")
+
+    lines.append("")
+
+    # Net
+    if net >= 0:
+        lines.append(f"*Net:* {currency} {net:,.2f} \u2705")
+    else:
+        lines.append(f"*Net:* -{currency} {abs(net):,.2f} \u26a0\ufe0f")
+
     return "\n".join(lines)
+
 
 
 def build_monthly_recap(rows: list[dict], month_label: str) -> str:
