@@ -6,3 +6,21 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
+
+  - type: cron
+    name: pullback-checkin
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    schedule: "0 * * * *"  # every hour
+    startCommand: >
+      python -c "
+      import os, httpx, sys;
+      r = httpx.post(
+        os.environ['APP_URL'] + '/pullback_cron',
+        headers={'x-cron-secret': os.environ['CRON_SECRET']},
+        timeout=30
+      );
+      print(r.status_code, r.text);
+      sys.exit(0 if r.is_success else 1)
+      "

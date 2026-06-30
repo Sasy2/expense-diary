@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from structlog import get_logger
 
-from app.database import get_user_expenses, get_users_for_monthly_summary
+from app.database import get_user_expenses, get_users_for_monthly_summary, get_pullback_candidates
 from app.messaging import build_monthly_recap, send_wa_text, build_weekly_recap
 from app.security import decrypt_stored_phone, safe_log_phone
 
@@ -103,3 +103,43 @@ async def send_weekly_recaps() -> tuple[int, int]:
 
     return sent, len(users)
 
+
+async def send_pullback_checkins() -> tuple[int, int]:
+    """
+    Send a single friendly check-in message to users who:
+      - joined between 24 and 48 hours ago
+      - have never logged a transaction (entry_count = 0)
+
+    The 24-hour sliding window guarantees each user is contacted exactly once
+    across hourly cron runs — no extra 'sent' flag required.
+
+    Returns (sent_count, candidates_count).
+    """
+    candidates = await get_pullback_candidates()
+    sent = 0
+
+    MESSAGE = (
+        "Hey! Just checking in — have you tried logging anything yet? 😊\n\n"
+        "Just type something like:\n"
+        "  • *20 GHS lunch*\n"
+        "  • *Uber 35 GHS*\n"
+        "  • *Client paid 500 GHS*\n\n"
+        "Give it a go and see what happens!"
+    )
+
+    for user in candidates:
+        phone = decrypt_stored_phone(user.get("notify_phone_enc") or "")
+        if not phone:
+            continue
+        try:
+            await send_wa_text(phone, MESSAGE)
+            sent += 1
+            logger.info("Pullback check-in sent", phone=safe_log_phone(phone))
+        except Exception as exc:
+            logger.error(
+                "Pullback check-in failed",
+                phone=safe_log_phone(phone),
+                error=str(exc),
+            )
+
+    return sent, len(candidates)

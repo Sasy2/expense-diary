@@ -51,7 +51,7 @@ from app.database import (
     get_dashboard_stats,
 )
 from app.dashboard_html import DASHBOARD_HTML
-from app.summaries import send_monthly_recaps, send_weekly_recaps
+from app.summaries import send_monthly_recaps, send_weekly_recaps, send_pullback_checkins
 from app.trial import handle_trial_lifecycle, run_trial_expiry_cron
 from app.handlers import detect_command, detect_greeting, detect_farewell, detect_small_talk, handle_command, process_expense_message
 from app.messaging import build_greeting_reply, build_farewell_reply, build_small_talk_reply, build_welcome, send_wa_text
@@ -386,6 +386,26 @@ async def weekly_cron(request: Request):
         "recaps_eligible": eligible,
     }
 
+
+@app.post("/pullback_cron")
+async def pullback_cron(request: Request):
+    """
+    Called hourly by an external cron job.
+    Sends a single check-in message to users who joined 24-48 h ago
+    and have never logged a transaction.
+    """
+    secret = request.headers.get("x-cron-secret", "")
+    if secret != os.environ.get("CRON_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Unauthorised")
+
+    logger.info("Pullback cron started")
+    sent, candidates = await send_pullback_checkins()
+    logger.info("Pullback cron complete", sent=sent, candidates=candidates)
+    return {
+        "status":     "ok",
+        "sent":       sent,
+        "candidates": candidates,
+    }
 
 
 @app.post("/", response_model=ManualExpenseResponse)

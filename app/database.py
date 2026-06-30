@@ -582,6 +582,200 @@ async def get_dashboard_stats() -> dict:
     return {
         "total_users": len(users_list),
         "active_users_count": len(active_users),
+    def _query():
+        q = (
+            sb.table("expenses")
+              .select("id, encrypted_payload, logged_at, month_year")
+              .eq("user_id", user_id)
+              .order("logged_at", desc=order_desc)
+        )
+        if month_year:
+            q = q.eq("month_year", month_year)
+        if limit:
+            q = q.limit(limit)
+        return q.execute().data or []
+
+    rows = await asyncio.to_thread(_query)
+    results: list[dict] = []
+    for row in rows:
+        try:
+            data = decrypt_for_user(row["encrypted_payload"], phone)
+            data["id"] = row["id"]
+            data["logged_at"] = row["logged_at"]
+            results.append(data)
+        except (InvalidToken, Exception) as exc:
+            logger.warning("Decrypt failed", row_id=row["id"], error=str(exc))
+    return results
+
+
+async def get_category_budget(user_id: str, category: str, month_year: str) -> Optional[dict]:
+    """Retrieve budget limit for a category and month."""
+    sb = get_supabase()
+    result = await asyncio.to_thread(
+        lambda: sb.table("expense_budgets")
+            .select("id, limit_amount")
+            .eq("user_id", user_id)
+            .eq("category", category)
+            .eq("month_year", month_year)
+            .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+async def get_savings_goals(user_id: str) -> list[dict]:
+    """Retrieve active savings goals for a user."""
+    sb = get_supabase()
+    result = await asyncio.to_thread(
+        lambda: sb.table("savings_goals")
+            .select("id, name, target_amount, current_amount, target_date")
+            .eq("user_id", user_id)
+            .execute()
+    )
+    return result.data or []
+
+
+async def register_message_id(message_id: str) -> bool:
+    """
+    Attempt to insert the message_id into processed_messages.
+    Returns True if it was successfully inserted (new message),
+    False if it already existed (duplicate).
+    """
+    if not message_id:
+        return True
+    sb = get_supabase()
+    try:
+        await asyncio.to_thread(
+            lambda: sb.table("processed_messages")
+                .insert({"message_id": message_id})
+                .execute()
+        )
+        return True
+    except Exception as exc:
+        logger.info("Duplicate WhatsApp message detected and ignored", message_id=message_id)
+        return False
+
+
+async def get_dashboard_stats() -> dict:
+    """
+    Fetch all users and expenses from Supabase.
+    Decrypt phone numbers and expense payloads in memory.
+    Return aggregated statistics for the developer dashboard.
+    """
+    sb = get_supabase()
+
+    # 1. Fetch all users
+    users_result = await asyncio.to_thread(
+        lambda: sb.table("expense_users")
+            .select("id, tier, entry_count, trial_ends_at, is_paid, created_at, notify_phone_enc")
+            .order("created_at", desc=True)
+            .execute()
+    )
+    users_data = users_result.data or []
+
+    # 2. Map user_id -> decrypted phone & user details
+    user_map = {}
+    users_list = []
+    tiers_count = {"free": 0, "pro": 0, "premium": 0}
+    active_users = set()
+
+    for u in users_data:
+        u_id = u["id"]
+        phone_enc = u.get("notify_phone_enc")
+        phone = decrypt_stored_phone(phone_enc) if phone_enc else None
+
+        tier = u.get("tier") or "free"
+        tiers_count[tier] = tiers_count.get(tier, 0) + 1
+        entry_count = u.get("entry_count", 0)
+
+        user_info = {
+            "id": u_id,
+            "phone": phone or "Encrypted",
+            "phone_masked": f"+{phone[:-4]}****" if phone and len(phone) > 4 else "Encrypted ●●●●",
+            "tier": tier,
+            "entry_count": entry_count,
+            "trial_ends_at": u.get("trial_ends_at"),
+            "is_paid": u.get("is_paid", False),
+            "created_at": u.get("created_at"),
+            "transactions_count": entry_count,  # seed with entry_count as baseline
+            "last_active": "Never",
+            "transactions": []
+        }
+        if entry_count > 0:
+            active_users.add(u_id)
+
+        user_map[u_id] = {
+            "phone": phone,
+            "info": user_info
+        }
+        users_list.append(user_info)
+
+    # 3. Fetch all expenses
+    expenses_result = await asyncio.to_thread(
+        lambda: sb.table("expenses")
+            .select("id, user_id, encrypted_payload, logged_at, month_year")
+            .order("logged_at", desc=True)
+            .execute()
+    )
+    expenses_data = expenses_result.data or []
+
+    # 4. Decrypt and aggregate expenses
+    total_tx = sum(u.get("entry_count", 0) for u in users_data)  # baseline from user records
+    income_total = 0.0
+    expense_total = 0.0
+    category_counts = {}
+    input_method_counts = {"text": 0, "image": 0, "voice": 0, "manual": 0}
+    daily_stats = {}
+    decrypted_tx = 0
+
+    for exp in expenses_data:
+        u_id = exp["user_id"]
+        if u_id not in user_map:
+            continue
+
+        user_info = user_map[u_id]["info"]
+
+        # Update last_active without needing decryption
+        if user_info["last_active"] == "Never" and exp.get("logged_at"):
+            user_info["last_active"] = exp["logged_at"]
+
+        # Daily trends — no decryption needed
+        try:
+            day = exp["logged_at"].split("T")[0]
+            daily_stats[day] = daily_stats.get(day, 0) + 1
+        except Exception:
+            pass
+
+        phone = user_map[u_id]["phone"]
+        if not phone:
+            continue  # can't decrypt payload without phone key
+
+        try:
+            payload = decrypt_for_user(exp["encrypted_payload"], phone)
+            payload["id"] = exp["id"]
+            payload["logged_at"] = exp["logged_at"]
+            user_info["transactions"].append(payload)
+            decrypted_tx += 1
+
+            # Category count
+            cat = payload.get("category") or "Other"
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            # Input method
+            method = payload.get("input_method") or "text"
+            input_method_counts[method] = input_method_counts.get(method, 0) + 1
+
+            # Income / Expense sums
+            amt = float(payload.get("amount") or 0.0)
+            if payload.get("entry_type") == "Income":
+                income_total += amt
+            else:
+                expense_total += amt
+        except Exception as exc:
+            logger.warning("Decryption failed for dashboard expense row", row_id=exp["id"], error=str(exc))
+
+    return {
+        "total_users": len(users_list),
+        "active_users_count": len(active_users),
         "total_transactions": total_tx,
         "tiers": tiers_count,
         "categories": category_counts,
@@ -591,3 +785,31 @@ async def get_dashboard_stats() -> dict:
         "daily_trends": sorted([{"date": k, "count": v} for k, v in daily_stats.items()], key=lambda x: x["date"]),
         "users": users_list
     }
+
+
+async def get_pullback_candidates() -> list[dict]:
+    """
+    Return users who:
+      - joined between 24 and 48 hours ago
+      - have entry_count = 0  (never logged anything)
+      - have a stored encrypted phone (so we can reach them)
+
+    The fixed 24-hour window means each user appears exactly once
+    across all hourly cron runs — no extra 'sent' flag needed.
+    """
+    from datetime import timedelta
+    sb = get_supabase()
+    now = datetime.now(timezone.utc)
+    window_end   = (now - timedelta(hours=24)).isoformat()
+    window_start = (now - timedelta(hours=48)).isoformat()
+
+    result = await asyncio.to_thread(
+        lambda: sb.table("expense_users")
+            .select("id, notify_phone_enc")
+            .eq("entry_count", 0)
+            .lt("created_at", window_end)
+            .gt("created_at", window_start)
+            .not_.is_("notify_phone_enc", "null")
+            .execute()
+    )
+    return result.data or []
